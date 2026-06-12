@@ -77,6 +77,35 @@ impl<'a> Scanner<'a> {
         ))
     }
 
+    fn read_raw_string(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
+        // `start` is the index of the `r` prefix; the opening quote (one byte
+        // further along) has already been consumed by the caller.
+        let start_loc = Loc::new(self.line, 1 + start - self.line_start);
+        for (idx, c) in self.chars.by_ref() {
+            match c {
+                '\n' => {
+                    self.line += 1;
+                    self.line_start = idx + 1;
+                }
+                '"' => {
+                    return Ok(Token::RawString(start_loc, &self.source[start + 2..idx]));
+                }
+                _ => {}
+            }
+        }
+
+        Err(human_errors::user(
+            format!(
+                "Reached the end of the filter without finding the closing quote for a raw string starting at {}.",
+                start_loc
+            ),
+            &[
+                "Make sure that you have terminated your raw string with a '\"' character.",
+                "Raw strings do not support escape sequences, so they cannot contain '\"' characters.",
+            ],
+        ))
+    }
+
     fn read_number(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
         let mut end = start + self.advance_while_fn(|_, c| c.is_numeric());
         if let Some((loc, c)) = self.chars.peek()
@@ -111,6 +140,8 @@ impl<'a> Scanner<'a> {
             "in" => Ok(Token::In(location)),
             "startswith" => Ok(Token::StartsWith(location)),
             "endswith" => Ok(Token::EndsWith(location)),
+            "like" => Ok(Token::Like(location)),
+            "matches" => Ok(Token::Matches(location)),
             lexeme => Ok(Token::Property(location, lexeme)),
         }
     }
@@ -253,6 +284,10 @@ impl<'a> Iterator for Scanner<'a> {
                 '"' => {
                     return Some(self.read_string(idx));
                 }
+                'r' if matches!(self.chars.peek(), Some((_, '"'))) => {
+                    self.chars.next();
+                    return Some(self.read_raw_string(idx));
+                }
                 c if c.is_numeric() => {
                     return Some(self.read_number(idx));
                 }
@@ -317,17 +352,48 @@ mod tests {
     #[test]
     fn test_comparison_operators() {
         assert_sequence!(
-            "== != contains in startswith endswith > >= < <=",
+            "== != contains in startswith endswith like matches > >= < <=",
             Token::Equals(..),
             Token::NotEquals(..),
             Token::Contains(..),
             Token::In(..),
             Token::StartsWith(..),
             Token::EndsWith(..),
+            Token::Like(..),
+            Token::Matches(..),
             Token::GreaterThan(..),
             Token::GreaterEqual(..),
             Token::SmallerThan(..),
             Token::SmallerEqual(..),
+        );
+    }
+
+    #[test]
+    fn test_raw_string() {
+        assert_sequence!(
+            "r\"^release/v\\d+(\\.\\d+){2}$\"",
+            Token::RawString(.., "^release/v\\d+(\\.\\d+){2}$"),
+        );
+
+        // Escape sequences are not processed within raw strings, so backslashes
+        // survive untouched (and a `\"` would terminate the string).
+        assert_sequence!("r\"a\\\\b\"", Token::RawString(.., "a\\\\b"));
+
+        // An `r` which isn't immediately followed by a quote is just an identifier.
+        assert_sequence!(
+            "release r2d2",
+            Token::Property(.., "release"),
+            Token::Property(.., "r2d2"),
+        );
+    }
+
+    #[test]
+    fn test_raw_string_location_tracking() {
+        assert_sequence!(
+            "r\"multi\nline\" && done",
+            Token::RawString(Loc { line: 1, column: 1 }, "multi\nline"),
+            Token::And(Loc { line: 2, column: 7 }),
+            Token::Property(.., "done"),
         );
     }
 
@@ -417,6 +483,10 @@ mod tests {
     #[case(
         "\"unterminated",
         "Reached the end of the filter without finding the closing quote for a string starting at line 1, column 1"
+    )]
+    #[case(
+        "r\"unterminated",
+        "Reached the end of the filter without finding the closing quote for a raw string starting at line 1, column 1"
     )]
     fn test_lexing_errors(#[case] input: &str, #[case] message: &str) {
         let mut scanner = Scanner::new(input);

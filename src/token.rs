@@ -16,6 +16,7 @@ pub enum Token<'a> {
     True(Loc),
     False(Loc),
     String(Loc, &'a str),
+    RawString(Loc, &'a str),
     Number(Loc, &'a str),
 
     Equals(Loc),
@@ -24,6 +25,8 @@ pub enum Token<'a> {
     In(Loc),
     StartsWith(Loc),
     EndsWith(Loc),
+    Like(Loc),
+    Matches(Loc),
     GreaterThan(Loc),
     SmallerThan(Loc),
     GreaterEqual(Loc),
@@ -49,6 +52,7 @@ impl Token<'_> {
             Token::True(..) => "true",
             Token::False(..) => "false",
             Token::String(.., s) => s,
+            Token::RawString(.., s) => s,
             Token::Number(.., s) => s,
 
             Token::Equals(..) => "==",
@@ -57,6 +61,8 @@ impl Token<'_> {
             Token::In(..) => "in",
             Token::StartsWith(..) => "startswith",
             Token::EndsWith(..) => "endswith",
+            Token::Like(..) => "like",
+            Token::Matches(..) => "matches",
             Token::GreaterThan(..) => ">",
             Token::GreaterEqual(..) => ">=",
             Token::SmallerThan(..) => "<",
@@ -82,6 +88,7 @@ impl Token<'_> {
             Token::True(loc) => *loc,
             Token::False(loc) => *loc,
             Token::String(loc, ..) => *loc,
+            Token::RawString(loc, ..) => *loc,
             Token::Number(loc, ..) => *loc,
 
             Token::Equals(loc) => *loc,
@@ -90,6 +97,8 @@ impl Token<'_> {
             Token::In(loc) => *loc,
             Token::StartsWith(loc) => *loc,
             Token::EndsWith(loc) => *loc,
+            Token::Like(loc) => *loc,
+            Token::Matches(loc) => *loc,
             Token::GreaterThan(loc) => *loc,
             Token::SmallerThan(loc) => *loc,
             Token::GreaterEqual(loc) => *loc,
@@ -106,6 +115,7 @@ impl Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::String(.., s) => write!(f, "\"{s}\""),
+            Token::RawString(.., s) => write!(f, "r\"{s}\""),
             t => write!(f, "{}", t.lexeme()),
         }
     }
@@ -130,6 +140,7 @@ mod tests {
     #[case(Token::True(LOC), "true")]
     #[case(Token::False(LOC), "false")]
     #[case(Token::String(LOC, "hello"), "hello")]
+    #[case(Token::RawString(LOC, "he\\llo"), "he\\llo")]
     #[case(Token::Number(LOC, "1.5"), "1.5")]
     #[case(Token::Equals(LOC), "==")]
     #[case(Token::NotEquals(LOC), "!=")]
@@ -137,6 +148,8 @@ mod tests {
     #[case(Token::In(LOC), "in")]
     #[case(Token::StartsWith(LOC), "startswith")]
     #[case(Token::EndsWith(LOC), "endswith")]
+    #[case(Token::Like(LOC), "like")]
+    #[case(Token::Matches(LOC), "matches")]
     #[case(Token::GreaterThan(LOC), ">")]
     #[case(Token::GreaterEqual(LOC), ">=")]
     #[case(Token::SmallerThan(LOC), "<")]
@@ -153,6 +166,7 @@ mod tests {
     #[case(Token::Property(LOC, "repo.name"), "repo.name")]
     #[case(Token::Number(LOC, "1.5"), "1.5")]
     #[case(Token::String(LOC, "hello"), "\"hello\"")]
+    #[case(Token::RawString(LOC, "^\\d+$"), "r\"^\\d+$\"")]
     #[case(Token::And(LOC), "&&")]
     fn display_matches_lexeme(#[case] token: Token<'_>, #[case] expected: &str) {
         assert_eq!(token.to_string(), expected);
