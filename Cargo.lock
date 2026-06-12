@@ -181,6 +181,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "human-errors",
+ "regex",
  "rstest",
  "serde",
  "serde_json",

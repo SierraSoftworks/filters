@@ -1,6 +1,8 @@
 use std::fmt::{Debug, Display};
 
-use super::{FilterValue, token::Token};
+#[cfg(feature = "regex")]
+use super::pattern::CompiledRegex;
+use super::{FilterValue, pattern::Glob, token::Token};
 
 // WARNING: We cannot have clone/copy semantics here because the [`Filter`] relies on
 // pinning pointers to ensure that this struct can be safely used without additional
@@ -12,6 +14,12 @@ pub enum Expr<'a> {
     Binary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Logical(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Unary(Token<'a>, Box<Expr<'a>>),
+    // Pattern expressions store their pattern pre-compiled (the compiled forms
+    // own their data, so they don't depend on the pinned filter string) which
+    // allows them to be evaluated without any pattern-related allocation.
+    Like(Box<Expr<'a>>, Glob),
+    #[cfg(feature = "regex")]
+    Matches(Box<Expr<'a>>, CompiledRegex),
 }
 
 /// A visitor over [`Expr`] trees.
@@ -28,6 +36,9 @@ pub trait ExprVisitor<'a, T> {
             Expr::Binary(left, operator, right) => self.visit_binary(left, operator, right),
             Expr::Logical(left, operator, right) => self.visit_logical(left, operator, right),
             Expr::Unary(operator, right) => self.visit_unary(operator, right),
+            Expr::Like(left, glob) => self.visit_like(left, glob),
+            #[cfg(feature = "regex")]
+            Expr::Matches(left, regex) => self.visit_matches(left, regex),
         }
     }
 
@@ -46,6 +57,9 @@ pub trait ExprVisitor<'a, T> {
         right: &'a Expr<'a>,
     ) -> T;
     fn visit_unary(&mut self, operator: &'a Token<'a>, right: &'a Expr<'a>) -> T;
+    fn visit_like(&mut self, left: &'a Expr<'a>, glob: &'a Glob) -> T;
+    #[cfg(feature = "regex")]
+    fn visit_matches(&mut self, left: &'a Expr<'a>, regex: &'a CompiledRegex) -> T;
 }
 
 impl Display for Expr<'_> {
@@ -104,6 +118,19 @@ impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
         write!(self.0, "{}", operator.lexeme())?;
         self.visit_expr(right)
     }
+
+    fn visit_like(&mut self, left: &'e Expr<'e>, glob: &'e Glob) -> std::fmt::Result {
+        write!(self.0, "(like ")?;
+        self.visit_expr(left)?;
+        write!(self.0, " {})", glob)
+    }
+
+    #[cfg(feature = "regex")]
+    fn visit_matches(&mut self, left: &'e Expr<'e>, regex: &'e CompiledRegex) -> std::fmt::Result {
+        write!(self.0, "(matches ")?;
+        self.visit_expr(left)?;
+        write!(self.0, " {})", regex)
+    }
 }
 
 #[cfg(test)]
@@ -137,7 +164,23 @@ mod tests {
         Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Property("test")),),
         "!(property test)"
     )]
+    #[case(
+        Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile("feat/*"),),
+        "(like (property branch.name) \"feat/*\")"
+    )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {
+        assert_eq!(view, format!("{expr}"));
+        assert_eq!(view, format!("{expr:?}"));
+    }
+
+    #[cfg(feature = "regex")]
+    #[test]
+    fn matches_expression_visualization() {
+        let expr = Expr::Matches(
+            Box::new(Expr::Property("branch.name")),
+            CompiledRegex::compile("^release/v\\d+$").expect("compile the pattern"),
+        );
+        let view = "(matches (property branch.name) \"^release/v\\\\d+$\")";
         assert_eq!(view, format!("{expr}"));
         assert_eq!(view, format!("{expr:?}"));
     }

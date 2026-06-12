@@ -1,10 +1,27 @@
 use std::borrow::Cow;
 
+#[cfg(feature = "regex")]
+use super::pattern::CompiledRegex;
 use super::{
     FilterValue, Filterable,
     expr::{Expr, ExprVisitor},
+    pattern::Glob,
     token::Token,
 };
+
+/// Applies a string predicate to a value following the leniency rules of the
+/// pattern-matching operators: strings are tested directly, tuples match when
+/// any of their (directly nested) string elements match, and every other kind
+/// of value never matches.
+fn match_string_value<F: Fn(&str) -> bool>(value: &FilterValue, predicate: F) -> bool {
+    match value {
+        FilterValue::String(s) => predicate(s),
+        FilterValue::Tuple(items) => items
+            .iter()
+            .any(|item| matches!(item, FilterValue::String(s) if predicate(s))),
+        _ => false,
+    }
+}
 
 pub struct FilterContext<'a, T: Filterable> {
     target: &'a T,
@@ -91,6 +108,25 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
             token => unreachable!("Encountered an unexpected unary operator '{token}'"),
         }
     }
+
+    fn visit_like(&mut self, left: &'e Expr<'e>, glob: &'e Glob) -> Cow<'e, FilterValue> {
+        let left = self.visit_expr(left);
+        Cow::Owned(FilterValue::Bool(match_string_value(left.as_ref(), |s| {
+            glob.is_match(s)
+        })))
+    }
+
+    #[cfg(feature = "regex")]
+    fn visit_matches(
+        &mut self,
+        left: &'e Expr<'e>,
+        regex: &'e CompiledRegex,
+    ) -> Cow<'e, FilterValue> {
+        let left = self.visit_expr(left);
+        Cow::Owned(FilterValue::Bool(match_string_value(left.as_ref(), |s| {
+            regex.is_match(s)
+        })))
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +160,8 @@ mod tests {
                 "number" => 1.into(),
                 "null" => FilterValue::Null,
                 "tuple" => vec![true.into(), false.into()].into(),
+                "names" => vec!["Alice".into(), "Bob".into()].into(),
+                "mixed" => vec![1.into(), "Bob".into(), FilterValue::Null].into(),
                 _ => FilterValue::Null,
             }
         }
@@ -241,6 +279,65 @@ mod tests {
     #[case("string endswith null", false)]
     #[case("null endswith null", false)]
     fn endswith(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    // Strings match the glob pattern (case-insensitively).
+    #[case("string like \"Alice\"", true)]
+    #[case("string like \"alice\"", true)]
+    #[case("string like \"Al*\"", true)]
+    #[case("string like \"al*\"", true)]
+    #[case("string like \"*ice\"", true)]
+    #[case("string like \"?lice\"", true)]
+    #[case("string like \"*li*\"", true)]
+    #[case("string like \"Bob*\"", false)]
+    #[case("string like \"Alice?\"", false)]
+    #[case("string like \"*\"", true)]
+    #[case("string like \"\"", false)]
+    // Tuples match when any of their string elements match.
+    #[case("names like \"a*\"", true)]
+    #[case("names like \"b?b\"", true)]
+    #[case("names like \"carol\"", false)]
+    #[case("mixed like \"bob\"", true)]
+    #[case("mixed like \"1\"", false)] // numbers within tuples are not matched
+    #[case("tuple like \"*\"", false)] // no string elements at all
+    // Every other kind of value never matches, even against "*".
+    #[case("boolean like \"*\"", false)]
+    #[case("number like \"*\"", false)]
+    #[case("null like \"*\"", false)]
+    #[case("unknown like \"*\"", false)]
+    // Literal left-hand sides work too.
+    #[case("\"feat/login\" like \"feat/*\"", true)]
+    #[case("\"fix/login\" like \"feat/*\"", false)]
+    fn like(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[cfg(feature = "regex")]
+    #[rstest]
+    // Unanchored and case-sensitive by default.
+    #[case("string matches r\"lic\"", true)]
+    #[case("string matches r\"LIC\"", false)]
+    #[case("string matches r\"(?i)LIC\"", true)]
+    #[case("string matches r\"^Alice$\"", true)]
+    #[case("string matches r\"^lice$\"", false)]
+    #[case("string matches r\"^A\\w+$\"", true)]
+    // Plain strings work as patterns too, with standard escape processing.
+    #[case("string matches \"^A\\\\w+$\"", true)]
+    // Tuples match when any of their string elements match.
+    #[case("names matches r\"^B\\w+$\"", true)]
+    #[case("names matches r\"^C\\w+$\"", false)]
+    #[case("mixed matches r\"Bob\"", true)]
+    #[case("mixed matches r\"^1$\"", false)]
+    // Every other kind of value never matches.
+    #[case("boolean matches r\".*\"", false)]
+    #[case("number matches r\".*\"", false)]
+    #[case("null matches r\".*\"", false)]
+    // Literal left-hand sides work too.
+    #[case("\"release/v1.2.3\" matches r\"^release/v\\d+(\\.\\d+){2}$\"", true)]
+    #[case("\"release/v1.2\" matches r\"^release/v\\d+(\\.\\d+){2}$\"", false)]
+    fn matches_regex(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
     }
 

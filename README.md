@@ -32,6 +32,9 @@ it powers their backup policy filtering.
 
 - **Friendly syntax** — reads like plain English, with `&&`/`||`/`!`,
   comparisons, and string operators like `contains`, `startswith`, and `in`.
+- **Pattern matching** — glob-style matching with `like` (built in, zero
+  allocations at evaluation time) and full regular expressions with `matches`
+  (behind the optional `regex` feature).
 - **Helpful errors** — parse and evaluation errors include the exact line and
   column of the problem along with advice on how to fix it (powered by
   [human-errors](https://crates.io/crates/human-errors)).
@@ -92,19 +95,22 @@ matching whenever the expression evaluates to a truthy value (`null`, `false`,
 
 ### Literals
 
-| Literal | Example         | Notes                                            |
-| ------- | --------------- | ------------------------------------------------ |
-| Null    | `null`          | Also returned for properties which aren't found. |
-| Boolean | `true`, `false` |                                                  |
-| Number  | `123`, `123.45` | All numbers are 64-bit floats internally.        |
-| String  | `"hello"`       | Escape embedded quotes with `\"`.                |
-| Tuple   | `["a", "b"]`    | A list of literal values.                        |
+| Literal    | Example         | Notes                                            |
+| ---------- | --------------- | ------------------------------------------------ |
+| Null       | `null`          | Also returned for properties which aren't found. |
+| Boolean    | `true`, `false` |                                                  |
+| Number     | `123`, `123.45` | All numbers are 64-bit floats internally.        |
+| String     | `"hello"`       | Escape embedded quotes with `\"`.                |
+| Raw string | `r"^v\d+$"`     | No escape processing; cannot contain `"`.        |
+| Tuple      | `["a", "b"]`    | A list of literal values.                        |
 
 ### Properties
 
 Any other identifier — including `.` and `-` separated names like
 `release.prerelease` or `asset.source-code` — is treated as a property
 reference and resolved by calling `Filterable::get` on the target object.
+Operator keywords (`in`, `contains`, `startswith`, `endswith`, `like`,
+`matches`) are reserved and cannot be used as property names.
 
 ### Operators
 
@@ -119,8 +125,50 @@ In order of increasing precedence:
 | `contains`               | String contains a substring, or tuple contains a value. |
 | `in`                     | Inverse of `contains` (`a in b` ≡ `b contains a`).      |
 | `startswith`, `endswith` | String prefix/suffix tests (case-insensitive).          |
+| `like`                   | Case-insensitive glob match (`*` and `?` wildcards).    |
+| `matches`                | Regular expression match (requires the `regex` feature). |
 | `!`                      | Logical NOT (unary).                                    |
 | `(...)`                  | Grouping.                                               |
+
+### Pattern matching
+
+The `like` operator matches a string against a glob pattern, where `*` matches
+any sequence of characters (including none), `?` matches exactly one
+character, and a backslash makes the following character literal (`\*`, `\?`,
+`\\`). Character classes like `[a-z]` are not supported. As with the rest of
+the language, matching is case-insensitive, using the same Unicode
+case-folding rules as `==`, `contains`, `startswith`, and `endswith` —
+including multi-character folds, so `"groß" like "*ss"` holds (note that `?`
+counts folded characters, so `ß` counts as two):
+
+```text
+branch.name like "feat/*"
+repo.name like "*-backup"
+version like "v?.?.?"
+```
+
+With the optional `regex` feature enabled, the `matches` operator tests a
+string against a regular expression (powered by the
+[regex](https://docs.rs/regex) crate). Raw strings (`r"..."`) avoid having to
+escape backslashes. Unlike the rest of the language, regular expressions are
+case-sensitive as written (use `(?i)` to ignore case) and unanchored (use `^`
+and `$` to anchor the match):
+
+```text
+branch.name matches r"^release/v\d+(\.\d+){2}$"
+commit.message matches "(?i)breaking change"
+```
+
+Both operators require their pattern to be a string literal: patterns are
+compiled once when the filter is parsed (invalid regular expressions are
+reported as friendly parse errors) and evaluation performs no
+pattern-related heap allocation. Only string values can match a pattern;
+tuples match when any of their string elements match, while `null`, booleans,
+and numbers never match.
+
+```shell
+cargo add filters --features regex
+```
 
 ### Examples
 
@@ -129,6 +177,8 @@ In order of increasing precedence:
 !release.prerelease && !asset.source-code
 size > 1024 && (archived || disabled)
 "backup" in tags
+branch.name like "feat/*"
+branch.name matches r"^release/v\d+(\.\d+){2}$"
 ```
 
 ## Serde support
