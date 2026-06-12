@@ -28,6 +28,13 @@ regex = ["dep:regex"]
 ## Enables deserializing a [`Filter`] directly from configuration files using serde.
 serde = ["dep:serde"]
 
+# The allocation-counting test installs its own #[global_allocator] and needs
+# to run single-threaded so that no other test's allocations pollute the
+# measurements; disabling the default harness gives it a deterministic main().
+[[test]]
+name = "alloc"
+harness = false
+
 [dev-dependencies]
 criterion = "0.7"
 regex = "1.11"

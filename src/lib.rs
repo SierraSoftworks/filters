@@ -59,20 +59,22 @@
 //!
 //! ## Literals
 //!
-//! | Literal  | Example                | Notes                                            |
-//! |----------|------------------------|--------------------------------------------------|
-//! | Null     | `null`                 | Also returned for properties which aren't found. |
-//! | Boolean  | `true`, `false`        |                                                  |
-//! | Number   | `123`, `123.45`        | All numbers are 64-bit floats internally.        |
-//! | String   | `"hello"`              | Escape embedded quotes with `\"`.                |
-//! | Tuple    | `["a", "b"]`           | A list of literal values.                        |
+//! | Literal    | Example                | Notes                                            |
+//! |------------|------------------------|--------------------------------------------------|
+//! | Null       | `null`                 | Also returned for properties which aren't found. |
+//! | Boolean    | `true`, `false`        |                                                  |
+//! | Number     | `123`, `123.45`        | All numbers are 64-bit floats internally.        |
+//! | String     | `"hello"`              | Escape embedded quotes with `\"`.                |
+//! | Raw string | `r"^v\d+$"`            | No escape processing; cannot contain `"` (the `r#"..."#` form is not supported). |
+//! | Tuple      | `["a", "b"]`           | A list of literal values.                        |
 //!
 //! ## Properties
 //!
 //! Any other identifier (including `.` and `-` separated names like
 //! `release.prerelease` or `asset.source-code`) is treated as a property
 //! reference, and is resolved by calling [`Filterable::get`] on the target
-//! object.
+//! object. Note that the operator keywords below (`in`, `contains`, `like`,
+//! `matches`, etc.) are reserved and cannot be used as property names.
 //!
 //! ## Operators
 //!
@@ -87,11 +89,89 @@
 //! | `contains`               | String contains a substring, or tuple contains a value.            |
 //! | `in`                     | Inverse of `contains` (i.e. `a in b` ≡ `b contains a`).            |
 //! | `startswith`, `endswith` | String prefix/suffix tests (case-insensitive).                     |
+//! | `like`                   | Case-insensitive glob match (`*` and `?` wildcards).               |
+//! | `matches`                | Regular expression match (requires the **`regex`** crate feature). |
 //! | `!`                      | Logical NOT (unary).                                               |
 //! | `(...)`                  | Grouping.                                                          |
 //!
+//! ## Pattern matching
+//!
+//! The `like` operator matches a string against a glob pattern. `*` matches
+//! any sequence of characters (including none), `?` matches exactly one
+//! character, and a backslash makes the following character literal (`\*`,
+//! `\?`, `\\`); character classes like `[a-z]` are **not** supported. Like
+//! the rest of the language, matching is case-insensitive (each character is
+//! compared by its Unicode lowercase expansion).
+//!
+//! ```
+//! use filters::{Filter, FilterValue, Filterable};
+//!
+//! struct Branch(&'static str);
+//!
+//! impl Filterable for Branch {
+//!     fn get(&self, key: &str) -> FilterValue {
+//!         match key {
+//!             "branch.name" => self.0.into(),
+//!             _ => FilterValue::Null,
+//!         }
+//!     }
+//! }
+//!
+//! # fn main() -> Result<(), filters::Error> {
+//! let filter = Filter::new(r#"branch.name like "feat/*""#)?;
+//! assert!(filter.matches(&Branch("feat/login"))?);
+//! assert!(filter.matches(&Branch("FEAT/LOGIN"))?);
+//! assert!(!filter.matches(&Branch("fix/typo"))?);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! With the **`regex`** crate feature enabled, the `matches` operator tests a
+//! string against a regular expression (as implemented by the
+//! [regex](https://docs.rs/regex) crate). Raw strings (`r"..."`) are the most
+//! convenient way to write these, since they perform no escape processing.
+//! Unlike the rest of the language, regular expressions are case-sensitive as
+//! written (use `(?i)` to ignore case) and unanchored (use `^` and `$` to
+//! anchor the match).
+//!
+//! ```
+//! # use filters::{Filter, FilterValue, Filterable};
+//! # struct Branch(&'static str);
+//! # impl Filterable for Branch {
+//! #     fn get(&self, key: &str) -> FilterValue {
+//! #         match key {
+//! #             "branch.name" => self.0.into(),
+//! #             _ => FilterValue::Null,
+//! #         }
+//! #     }
+//! # }
+//! # fn main() -> Result<(), filters::Error> {
+//! # #[cfg(feature = "regex")]
+//! # {
+//! let filter = Filter::new(r#"branch.name matches r"^release/v\d+(\.\d+){2}$""#)?;
+//! assert!(filter.matches(&Branch("release/v1.2.3"))?);
+//! assert!(!filter.matches(&Branch("release/v1.2"))?);
+//! # }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Both operators require their pattern to be a string literal: the pattern
+//! is compiled once when the filter is parsed (with invalid regular
+//! expressions reported as friendly [`Filter::new`] errors), and evaluation
+//! performs no pattern-related heap allocation. Glob evaluation is fully
+//! allocation-free, while regex evaluation is *amortized* allocation-free
+//! (the regex engine lazily allocates per-thread scratch space on first use
+//! and reuses it thereafter). Only string values can match a pattern: tuples
+//! match when any of their string elements match, while `null`, booleans, and
+//! numbers never match — even against `like "*"`.
+//!
 //! # Crate features
 //!
+//! - **`regex`** — enables the `matches` regular expression operator (adds a
+//!   dependency on the [regex](https://docs.rs/regex) crate). Without this
+//!   feature, filters using `matches` fail to parse with an error explaining
+//!   how to enable it.
 //! - **`serde`** — implements [`serde::Deserialize`] for [`Filter`], allowing
 //!   filters to be parsed directly out of configuration files (a missing or
 //!   `null` value deserializes to the match-everything `true` filter).
