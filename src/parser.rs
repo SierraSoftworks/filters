@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use human_errors::{Error, ResultExt};
 
-use super::{FilterValue, expr::Expr, token::Token};
+use super::{FilterValue, expr::Expr, pattern::Glob, token::Token};
 
 pub struct Parser<'a, I: Iterator<Item = Result<Token<'a>, Error>>> {
     tokens: Peekable<I>,
@@ -92,9 +92,79 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             let token = self.tokens.next().unwrap()?;
             let right = self.unary()?;
             expr = Expr::Binary(Box::new(expr), token, Box::new(right));
+        } else if matches!(self.tokens.peek(), Some(Ok(Token::Like(..)))) {
+            let token = self.tokens.next().unwrap()?;
+            let pattern = self.pattern_literal(&token, "branch.name like \"feat/*\"")?;
+            expr = Expr::Like(Box::new(expr), Glob::compile(&pattern));
+        } else if matches!(self.tokens.peek(), Some(Ok(Token::Matches(..)))) {
+            let token = self.tokens.next().unwrap()?;
+
+            #[cfg(not(feature = "regex"))]
+            return Err(human_errors::user(
+                format!(
+                    "Your filter uses the 'matches' operator at {}, but this build of the filters crate does not include regular expression support.",
+                    token.location()
+                ),
+                &[
+                    "Enable the 'regex' feature of the filters crate to use the 'matches' operator (e.g. filters = { version = \"0.1\", features = [\"regex\"] }).",
+                    "Alternatively, use the 'like' operator for simple glob-style patterns (e.g. branch.name like \"feat/*\").",
+                ],
+            ));
+
+            #[cfg(feature = "regex")]
+            {
+                let pattern = self.pattern_literal(&token, "branch.name matches r\"^feat/.+$\"")?;
+                let regex = crate::pattern::CompiledRegex::compile(&pattern).wrap_user_err(
+                    format!(
+                        "Failed to compile the regular expression pattern \"{pattern}\" for the 'matches' operator at {}.",
+                        token.location()
+                    ),
+                    &[
+                        "Make sure that your pattern is a valid regular expression as understood by the Rust regex crate (https://docs.rs/regex).",
+                        "Remember that within a normal \"...\" string you need to escape backslashes (\\\\d); raw strings (r\"^v\\d+$\") avoid this.",
+                    ],
+                )?;
+                expr = Expr::Matches(Box::new(expr), regex);
+            }
         }
 
         Ok(expr)
+    }
+
+    /// Reads the string literal which provides the pattern for a `like` or
+    /// `matches` operator, processing escape sequences for plain strings and
+    /// taking raw strings verbatim. Any other token is a parse error: patterns
+    /// must be available at parse time so that they can be pre-compiled.
+    fn pattern_literal(&mut self, operator: &Token, example: &str) -> Result<String, Error> {
+        match self.tokens.next() {
+            Some(Ok(Token::String(.., s))) => Ok(s.replace("\\\"", "\"").replace("\\\\", "\\")),
+            Some(Ok(Token::RawString(.., s))) => Ok(s.to_string()),
+            Some(Ok(token)) => Err(human_errors::user(
+                format!(
+                    "The '{}' operator at {} must be followed by its pattern as a string literal, but we found '{}' at {} instead (for example: {}).",
+                    operator.lexeme(),
+                    operator.location(),
+                    token,
+                    token.location(),
+                    example,
+                ),
+                &[
+                    "Provide the pattern as a string literal, since patterns are compiled when the filter is parsed and cannot be computed from properties.",
+                ],
+            )),
+            Some(Err(err)) => Err(err),
+            None => Err(human_errors::user(
+                format!(
+                    "We reached the end of your filter expression while looking for the string pattern of the '{}' operator at {} (for example: {}).",
+                    operator.lexeme(),
+                    operator.location(),
+                    example,
+                ),
+                &[
+                    "Make sure that you have written a valid filter query and that you haven't forgotten part of it.",
+                ],
+            )),
+        }
     }
 
     fn unary(&mut self) -> Result<Expr<'a>, Error> {
@@ -181,6 +251,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 // (allocating) replacement passes above.
                 s.into()
             }),
+            Some(Ok(Token::RawString(.., s))) => Ok(s.into()),
             Some(Ok(Token::Null(..))) => Ok(FilterValue::Null),
             Some(Ok(token)) => Err(human_errors::user(
                 format!("While parsing your filter, we found an unexpected '{}' at {}.", token, token.location()),
@@ -249,6 +320,163 @@ mod tests {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    #[rstest]
+    #[case(
+        "name like \"feat/*\"",
+        Expr::Like(Box::new(Expr::Property("name")), Glob::compile("feat/*"))
+    )]
+    #[case(
+        "name like r\"feat/\\*\"",
+        Expr::Like(Box::new(Expr::Property("name")), Glob::compile("feat/\\*"))
+    )]
+    #[case(
+        "name like \"say \\\"hi\\\"\"",
+        Expr::Like(Box::new(Expr::Property("name")), Glob::compile("say \"hi\""))
+    )]
+    #[case("\"feat/login\" like \"feat/*\"", Expr::Like(Box::new(Expr::Literal("feat/login".into())), Glob::compile("feat/*")))]
+    fn parsing_like_expressions(#[case] input: &str, #[case] ast: Expr) {
+        let tokens = crate::lexer::Scanner::new(input);
+        match Parser::parse(tokens.into_iter()) {
+            Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    #[cfg(feature = "regex")]
+    #[rstest]
+    #[case(
+        "name matches r\"^release/v\\d+(\\.\\d+){2}$\"",
+        "^release/v\\d+(\\.\\d+){2}$"
+    )]
+    #[case("name matches \"^release/v\\\\d+$\"", "^release/v\\d+$")]
+    fn parsing_matches_expressions(#[case] input: &str, #[case] pattern: &str) {
+        let tokens = crate::lexer::Scanner::new(input);
+        match Parser::parse(tokens.into_iter()) {
+            Ok(Expr::Matches(left, regex)) => {
+                assert_eq!(*left, Expr::Property("name"));
+                assert_eq!(regex.pattern(), pattern);
+            }
+            Ok(expr) => panic!("Expected a matches expression, got {:?}", expr),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    #[cfg(feature = "regex")]
+    #[test]
+    fn parsing_invalid_regex_patterns_fails_with_details() {
+        let tokens = crate::lexer::Scanner::new("name matches r\"(unclosed\"");
+        match Parser::parse(tokens.into_iter()) {
+            Ok(expr) => panic!("Expected an error, got {:?}", expr),
+            Err(e) => {
+                let message = e.to_string();
+                assert!(
+                    message.contains(
+                        "Failed to compile the regular expression pattern \"(unclosed\" for the 'matches' operator at line 1, column 6."
+                    ),
+                    "unexpected error: {message}"
+                );
+                // The underlying regex crate's error details should be included.
+                assert!(
+                    message.contains("unclosed group"),
+                    "unexpected error: {message}"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(feature = "regex"))]
+    #[test]
+    fn parsing_matches_without_the_regex_feature_fails_with_advice() {
+        let tokens = crate::lexer::Scanner::new("name matches r\"^v\\d+$\"");
+        match Parser::parse(tokens.into_iter()) {
+            Ok(expr) => panic!("Expected an error, got {:?}", expr),
+            Err(e) => {
+                let message = e.to_string();
+                assert!(
+                    message.contains(
+                        "Your filter uses the 'matches' operator at line 1, column 6, but this build of the filters crate does not include regular expression support."
+                    ),
+                    "unexpected error: {message}"
+                );
+                assert!(
+                    message.contains("Enable the 'regex' feature"),
+                    "unexpected error: {message}"
+                );
+            }
+        }
+    }
+
+    #[rstest]
+    #[case(
+        "name like other.name",
+        "The 'like' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found 'other.name' at line 1, column 11 instead"
+    )]
+    #[case(
+        "name like 5",
+        "The 'like' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found '5' at line 1, column 11 instead"
+    )]
+    #[case(
+        "name like true",
+        "The 'like' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found 'true' at line 1, column 11 instead"
+    )]
+    #[case(
+        "name like",
+        "We reached the end of your filter expression while looking for the string pattern of the 'like' operator at line 1, column 6"
+    )]
+    #[case(
+        "name like \"unterminated",
+        "Reached the end of the filter without finding the closing quote for a string starting at line 1, column 11"
+    )]
+    #[case(
+        "name like r\"unterminated",
+        "Reached the end of the filter without finding the closing quote for a raw string starting at line 1, column 11"
+    )]
+    fn invalid_like_patterns(#[case] input: &str, #[case] message: &str) {
+        let tokens = crate::lexer::Scanner::new(input);
+        match Parser::parse(tokens.into_iter()) {
+            Ok(expr) => panic!("Expected an error, got {:?}", expr),
+            Err(e) => assert!(
+                e.to_string().contains(message),
+                "Expected error message to contain '{}', got '{}'",
+                message,
+                e
+            ),
+        }
+    }
+
+    #[cfg(feature = "regex")]
+    #[rstest]
+    #[case(
+        "name matches other.name",
+        "The 'matches' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found 'other.name' at line 1, column 14 instead"
+    )]
+    #[case(
+        "name matches",
+        "We reached the end of your filter expression while looking for the string pattern of the 'matches' operator at line 1, column 6"
+    )]
+    fn invalid_matches_patterns(#[case] input: &str, #[case] message: &str) {
+        let tokens = crate::lexer::Scanner::new(input);
+        match Parser::parse(tokens.into_iter()) {
+            Ok(expr) => panic!("Expected an error, got {:?}", expr),
+            Err(e) => assert!(
+                e.to_string().contains(message),
+                "Expected error message to contain '{}', got '{}'",
+                message,
+                e
+            ),
+        }
+    }
+
+    #[test]
+    fn raw_strings_are_plain_string_literals() {
+        let tokens = crate::lexer::Scanner::new("r\"a\\d\"");
+        match Parser::parse(tokens.into_iter()) {
+            Ok(Expr::Literal(value)) => assert_eq!(value, "a\\d".into()),
+            Ok(expr) => panic!("Expected a literal, got {:?}", expr),
             Err(e) => panic!("Error: {}", e),
         }
     }

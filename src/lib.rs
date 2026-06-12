@@ -110,6 +110,7 @@ mod interpreter;
 mod lexer;
 mod location;
 mod parser;
+mod pattern;
 mod token;
 mod value;
 
