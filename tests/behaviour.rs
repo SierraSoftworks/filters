@@ -1,0 +1,447 @@
+//! Integration tests exercising the public API of the `filters` crate,
+//! with a focus on edge cases, failure modes, and behavioural quirks
+//! which the unit tests don't cover.
+
+use filters::{Filter, FilterValue, Filterable};
+use rstest::rstest;
+
+/// A reasonably rich object for exercising the filter language end-to-end.
+struct Document {
+    title: String,
+    pages: f64,
+    published: bool,
+    rating: Option<f64>,
+    tags: Vec<&'static str>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            title: "The Rust Book".to_string(),
+            pages: 552.0,
+            published: true,
+            rating: Some(4.8),
+            tags: vec!["rust", "programming", "free"],
+        }
+    }
+}
+
+impl Filterable for Document {
+    fn get(&self, key: &str) -> FilterValue {
+        match key {
+            "doc.title" => self.title.as_str().into(),
+            "doc.pages" => self.pages.into(),
+            "doc.published" => self.published.into(),
+            "doc.rating" => self.rating.into(),
+            "doc.tags" => self
+                .tags
+                .iter()
+                .map(|&t| t.into())
+                .collect::<Vec<FilterValue>>()
+                .into(),
+            "doc.nan" => f64::NAN.into(),
+            _ => FilterValue::Null,
+        }
+    }
+}
+
+fn matches(filter: &str) -> bool {
+    Filter::new(filter)
+        .expect("the filter should parse")
+        .matches(&Document::default())
+        .expect("the filter should evaluate")
+}
+
+fn parse_error(filter: &str) -> String {
+    Filter::new(filter)
+        .expect_err("the filter should fail to parse")
+        .to_string()
+}
+
+mod construction {
+    use super::*;
+
+    #[test]
+    fn accepts_both_str_and_string() {
+        Filter::new("true").expect("&str should parse");
+        Filter::new(String::from("true")).expect("String should parse");
+    }
+
+    #[test]
+    fn empty_filters_are_rejected() {
+        assert!(parse_error("").contains("end of your filter expression"));
+        assert!(parse_error("   \t\n  ").contains("end of your filter expression"));
+    }
+
+    #[test]
+    fn filters_are_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Filter>();
+    }
+
+    #[test]
+    fn filters_can_be_shared_across_threads() {
+        let filter = Filter::new("doc.pages > 100").expect("parse filter");
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    assert!(filter.matches(&Document::default()).unwrap());
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn a_filter_can_be_reused_across_many_objects() {
+        let filter = Filter::new("doc.pages > 100").expect("parse filter");
+        for pages in 0..1000 {
+            let doc = Document {
+                pages: pages as f64,
+                ..Document::default()
+            };
+            assert_eq!(filter.matches(&doc).unwrap(), pages > 100);
+        }
+    }
+}
+
+mod literals_and_truthiness {
+    use super::*;
+
+    #[rstest]
+    #[case("true", true)]
+    #[case("false", false)]
+    #[case("null", false)]
+    #[case("0", false)]
+    #[case("0.0", false)]
+    #[case("42", true)]
+    #[case("0.001", true)]
+    #[case("\"\"", false)]
+    #[case("\"false\"", true)] // non-empty strings are truthy, even "false"
+    #[case("[]", false)]
+    #[case("[false]", true)] // non-empty tuples are truthy, even [false]
+    fn literal_truthiness(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[rstest]
+    #[case("007 == 7", true)] // leading zeros are permitted
+    #[case("30 == 30.0", true)] // all numbers are floats internally
+    #[case("0.5 < 1", true)]
+    #[case("4.8 == 4.8", true)]
+    fn number_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn negative_numbers_are_not_literals() {
+        // There is no unary minus: "-5" lexes as a property reference, which
+        // resolves to null for objects which don't define it.
+        assert!(matches("-5 == null"));
+    }
+}
+
+mod properties {
+    use super::*;
+
+    #[rstest]
+    #[case("doc.title", true)]
+    #[case("doc.published", true)]
+    #[case("doc.rating", true)]
+    #[case("missing", false)]
+    fn property_truthiness(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn missing_properties_are_null() {
+        assert!(matches("missing == null"));
+        assert!(matches("!(missing != null)"));
+        assert!(matches("no.such.property-name == null"));
+    }
+
+    #[test]
+    fn option_none_properties_are_null() {
+        let doc = Document {
+            rating: None,
+            ..Document::default()
+        };
+        let filter = Filter::new("doc.rating == null").expect("parse filter");
+        assert!(filter.matches(&doc).unwrap());
+    }
+
+    #[rstest]
+    #[case("infra")] // starts with the "in" keyword
+    #[case("containsx")] // starts with the "contains" keyword
+    #[case("truthy")] // starts with the "true" keyword
+    #[case("nullable")] // starts with the "null" keyword
+    fn keyword_prefixed_identifiers_are_properties(#[case] name: &str) {
+        // These must parse as (null) property references, not keywords.
+        assert!(matches(&format!("{name} == null")));
+    }
+
+    #[test]
+    fn keywords_cannot_be_used_as_property_names() {
+        // `contains` is an operator, so a property of that name is unreachable.
+        assert!(Filter::new("contains == null").is_err());
+    }
+}
+
+mod strings {
+    use super::*;
+
+    #[rstest]
+    #[case(r#"doc.title == "the rust book""#, true)] // equality ignores case
+    #[case(r#"doc.title == "THE RUST BOOK""#, true)]
+    #[case(r#"doc.title contains "RUST""#, true)]
+    #[case(r#"doc.title startswith "the""#, true)]
+    #[case(r#"doc.title endswith "BOOK""#, true)]
+    fn string_operations_ignore_case(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn escaped_quotes_round_trip() {
+        assert!(matches(r#""say \"hi\"" == "say \"hi\"""#));
+        assert!(matches(r#""say \"hi\"" contains "\"hi\"""#));
+    }
+
+    #[test]
+    fn unicode_strings_are_supported() {
+        let doc = Document {
+            title: "Jürgen's Café Guide ☕".to_string(),
+            ..Document::default()
+        };
+        let filter = Filter::new(r#"doc.title contains "café""#).expect("parse filter");
+        assert!(filter.matches(&doc).unwrap());
+
+        let filter = Filter::new(r#"doc.title contains "☕""#).expect("parse filter");
+        assert!(filter.matches(&doc).unwrap());
+    }
+
+    #[test]
+    fn equality_is_only_ascii_case_insensitive() {
+        // Equality uses ASCII case folding, while contains/startswith/endswith
+        // use full Unicode lowercasing. This pins the (subtle) difference.
+        let doc = Document {
+            title: "JÜRGEN".to_string(),
+            ..Document::default()
+        };
+
+        let eq = Filter::new(r#"doc.title == "jürgen""#).expect("parse filter");
+        assert!(!eq.matches(&doc).unwrap());
+
+        let contains = Filter::new(r#"doc.title contains "jürgen""#).expect("parse filter");
+        assert!(contains.matches(&doc).unwrap());
+    }
+
+    #[test]
+    fn strings_spanning_lines_are_supported() {
+        assert!(matches("\"multi\nline\" contains \"multi\""));
+    }
+}
+
+mod tuples {
+    use super::*;
+
+    #[rstest]
+    #[case(r#"doc.tags contains "rust""#, true)]
+    #[case(r#"doc.tags contains "RUST""#, true)] // membership ignores case
+    #[case(r#"doc.tags contains "go""#, false)]
+    #[case(r#""rust" in doc.tags"#, true)]
+    #[case(r#"doc.tags == ["rust", "programming", "free"]"#, true)]
+    #[case(r#"doc.tags == ["rust", "programming"]"#, false)] // length matters
+    #[case(r#"doc.tags == ["free", "programming", "rust"]"#, false)] // order matters
+    #[case(r#"doc.tags != []"#, true)]
+    fn tuple_operations(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn tuples_may_contain_mixed_literal_types() {
+        assert!(matches(r#"[1, "two", true, null] contains "TWO""#));
+        assert!(matches(r#"null in [1, "two", true, null]"#));
+    }
+
+    #[test]
+    fn nested_tuples_are_not_supported() {
+        assert!(parse_error("[[1]]").contains("unexpected '['"));
+    }
+
+    #[test]
+    fn expressions_inside_tuples_are_not_supported() {
+        // Tuples may only contain literals, not arbitrary expressions.
+        assert!(Filter::new("[doc.pages]").is_err());
+        assert!(Filter::new("[1 + 2]").is_err());
+    }
+}
+
+mod comparisons {
+    use super::*;
+
+    #[rstest]
+    #[case("doc.pages > 100", true)]
+    #[case("doc.pages >= 552", true)]
+    #[case("doc.pages < 1000", true)]
+    #[case("doc.pages <= 551", false)]
+    #[case("true > false", true)] // booleans are ordered
+    #[case("\"abc\" < \"abd\"", true)] // strings are ordered (case-sensitively)
+    fn ordering(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[rstest]
+    #[case("doc.pages > \"100\"")] // number vs string
+    #[case("doc.pages < \"100\"")]
+    #[case("doc.title > 5")] // string vs number
+    #[case("doc.published > null")] // bool vs null
+    #[case("doc.pages == doc.title")] // mismatched equality
+    fn mismatched_types_never_match(#[case] filter: &str) {
+        assert!(!matches(filter));
+    }
+
+    #[rstest]
+    #[case("doc.nan == doc.nan", false)] // NaN is not equal to itself
+    #[case("doc.nan != doc.nan", true)]
+    #[case("doc.nan > 0", false)]
+    #[case("doc.nan < 0", false)]
+    #[case("doc.nan", true)] // ...but NaN is truthy (it isn't zero)
+    fn nan_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn comparisons_cannot_be_chained() {
+        assert!(parse_error("1 < 2 < 3").contains("unexpected '<'"));
+        assert!(parse_error("true == true == true").contains("unexpected '=='"));
+    }
+}
+
+mod logic {
+    use super::*;
+
+    #[rstest]
+    #[case("doc.published && doc.pages > 100 && doc.rating >= 4", true)]
+    #[case("!doc.published || doc.pages > 100", true)]
+    #[case("!(doc.published && doc.pages < 100)", true)]
+    #[case("!!doc.published", true)]
+    #[case("!!!doc.published", false)]
+    fn combinations(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn not_binds_tighter_than_comparisons() {
+        // `!a == b` parses as `(!a) == b`, not `!(a == b)`.
+        assert!(matches("!doc.published == false"));
+    }
+
+    #[test]
+    fn and_binds_tighter_than_or() {
+        // `a || b && c` parses as `a || (b && c)`.
+        assert!(matches("true || true && false"));
+        assert!(!matches("(true || true) && false"));
+    }
+
+    #[test]
+    fn logical_operators_return_operand_values() {
+        // Like many scripting languages, && and || return the deciding
+        // operand's value rather than a boolean.
+        assert!(matches(r#"(doc.title && doc.pages) == 552"#));
+        assert!(matches(r#"(null || doc.title) == "the rust book""#));
+    }
+
+    #[test]
+    fn deeply_nested_groups_parse_and_evaluate() {
+        let depth = 100;
+        let filter = format!("{}true{}", "(".repeat(depth), ")".repeat(depth));
+        assert!(matches(&filter));
+    }
+
+    #[test]
+    fn long_operator_chains_parse_and_evaluate() {
+        let filter = vec!["doc.published"; 500].join(" && ");
+        assert!(matches(&filter));
+
+        let filter = vec!["missing"; 500].join(" || ");
+        assert!(!matches(&filter));
+    }
+}
+
+mod failure_modes {
+    use super::*;
+
+    #[rstest]
+    #[case("doc.pages >", "end of your filter expression")]
+    #[case("&& true", "unexpected '&&'")]
+    #[case("true && ", "end of your filter expression")]
+    #[case("(true || false", "didn't find the closing ')'")]
+    #[case("[1, 2", "didn't find the closing ']'")]
+    #[case("a = b", "orphaned '='")]
+    #[case("a & b", "orphaned '&'")]
+    #[case("a | b", "orphaned '|'")]
+    #[case("\"unterminated", "without finding the closing quote")]
+    #[case("!", "end of your filter expression")]
+    fn parse_errors_are_descriptive(#[case] filter: &str, #[case] message: &str) {
+        let error = parse_error(filter);
+        assert!(
+            error.contains(message),
+            "expected the error for '{filter}' to contain '{message}', got: {error}"
+        );
+    }
+
+    #[test]
+    fn errors_include_accurate_locations_across_lines() {
+        let error = parse_error("doc.published &&\ndoc.pages =");
+        assert!(
+            error.contains("line 2, column 11"),
+            "expected a line 2 location in: {error}"
+        );
+    }
+
+    #[test]
+    fn trailing_tokens_are_rejected() {
+        assert!(parse_error("true false").contains("unexpected 'false'"));
+        // String tokens are displayed with quotes in error messages.
+        let error = parse_error(r#"true "oops""#);
+        assert!(
+            error.contains(r#"unexpected '"oops"'"#),
+            "expected the quoted string in: {error}"
+        );
+    }
+
+    #[test]
+    fn malformed_numbers_are_rejected() {
+        // "1.x" lexes as the number "1" followed by the property ".x".
+        assert!(parse_error("1.x").contains("unexpected '.x'"));
+    }
+
+    #[test]
+    fn errors_offer_remediation_advice() {
+        let error = parse_error("a & b");
+        assert!(
+            error.contains("'&&' operator"),
+            "expected remediation advice in: {error}"
+        );
+    }
+}
+
+mod formatting {
+    use super::*;
+
+    #[test]
+    fn display_preserves_the_original_expression() {
+        let raw = r#"doc.published && doc.title contains "rust""#;
+        let filter = Filter::new(raw).expect("parse filter");
+        assert_eq!(filter.to_string(), raw);
+        assert_eq!(filter.raw(), raw);
+    }
+
+    #[test]
+    fn debug_shows_the_parse_tree() {
+        let filter = Filter::new("a || b && c").expect("parse filter");
+        assert_eq!(
+            format!("{filter:?}"),
+            "(|| (property a) (&& (property b) (property c)))"
+        );
+    }
+}
