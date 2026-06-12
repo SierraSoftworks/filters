@@ -153,6 +153,25 @@ struct BackupPolicy {
 Missing or `null` filter fields deserialize to the match-everything filter
 `true`, so optional filters work out of the box.
 
+## Performance
+
+Filters are parsed once and may then be evaluated against any number of
+objects. Evaluation is allocation-free except for the owned `FilterValue`s
+your `Filterable::get` implementation returns — see
+[PERFORMANCE.md](PERFORMANCE.md) for the full allocation model and benchmark
+history.
+
+A criterion benchmark suite covering parsing and evaluation lives in
+`benches/filtering.rs`; run it with:
+
+```shell
+cargo bench
+```
+
+There is also an allocation-counting integration test
+(`tests/alloc_counter.rs`) which pins the exact number of heap allocations
+performed by `Filter::matches` for a range of filter shapes.
+
 ## Error messages
 
 Errors are designed to be shown directly to the people writing the filters:
