@@ -219,19 +219,28 @@ mod strings {
     }
 
     #[test]
-    fn equality_is_only_ascii_case_insensitive() {
-        // Equality uses ASCII case folding, while contains/startswith/endswith
-        // use full Unicode lowercasing. This pins the (subtle) difference.
+    fn equality_uses_unicode_case_folding() {
+        // Equality folds case with the same Unicode rules as the rest of the
+        // language, so non-ASCII characters compare case-insensitively too.
         let doc = Document {
             title: "JÜRGEN".to_string(),
             ..Document::default()
         };
 
         let eq = Filter::new(r#"doc.title == "jürgen""#).expect("parse filter");
-        assert!(!eq.matches(&doc).unwrap());
+        assert!(eq.matches(&doc).unwrap());
 
         let contains = Filter::new(r#"doc.title contains "jürgen""#).expect("parse filter");
         assert!(contains.matches(&doc).unwrap());
+    }
+
+    #[test]
+    fn multi_character_case_folds_are_supported() {
+        // Characters whose case-folded form spans several characters (e.g.
+        // ß → ss) participate fully in every case-insensitive operator.
+        assert!(matches(r#""straße" == "STRASSE""#));
+        assert!(matches(r#""groß" endswith "SS""#));
+        assert!(matches(r#""ss" in "groß""#));
     }
 
     #[test]

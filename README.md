@@ -136,8 +136,10 @@ The `like` operator matches a string against a glob pattern, where `*` matches
 any sequence of characters (including none), `?` matches exactly one
 character, and a backslash makes the following character literal (`\*`, `\?`,
 `\\`). Character classes like `[a-z]` are not supported. As with the rest of
-the language, matching is case-insensitive, using the same character-folding
-rules as `contains`, `startswith`, and `endswith`:
+the language, matching is case-insensitive, using the same Unicode
+case-folding rules as `==`, `contains`, `startswith`, and `endswith` —
+including multi-character folds, so `"groß" like "*ss"` holds (note that `?`
+counts folded characters, so `ß` counts as two):
 
 ```text
 branch.name like "feat/*"

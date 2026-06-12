@@ -6,14 +6,16 @@
 
 use std::fmt::{Debug, Display};
 
-use crate::case_sensitivity::chars_eq;
+use crate::case_sensitivity::{casefold, casefold_char};
 
 /// A single element of a compiled glob pattern.
 #[derive(PartialEq)]
 enum GlobToken {
-    /// Matches exactly the given character (case-insensitively).
+    /// Matches exactly the given case-folded character. Pattern literals are
+    /// folded at compile time, so multi-character expansions (e.g. `ß` → `ss`)
+    /// become a sequence of these tokens.
     Literal(char),
-    /// `?` — matches exactly one character (one `char`, not one byte).
+    /// `?` — matches exactly one character of the case-folded input.
     AnyChar,
     /// `*` — matches any sequence of characters, including the empty sequence.
     AnySequence,
@@ -33,12 +35,17 @@ enum GlobToken {
 /// Character classes (`[a-z]`) and alternation (`{a,b}`) are *not* supported.
 ///
 /// Matching is case-insensitive, using the same character folding rules as
-/// the rest of the filter language (see [`crate::case_sensitivity`]): two
-/// characters are equal when their folded expansions are equal, with all
-/// Greek sigma forms (`Σ`, `σ`, `ς`) treated as equivalent. This is a
-/// per-character ("simple") case fold, so multi-character lowercase
-/// expansions (e.g. `İ` → `i̇`) only compare equal to themselves, and `?`
-/// always consumes exactly one character of the input.
+/// the rest of the filter language (see [`crate::case_sensitivity`]): both
+/// the pattern (at compile time) and the input (at match time) are folded
+/// character-by-character via Unicode lowercasing, with all Greek sigma forms
+/// (`Σ`, `σ`, `ς`) treated as equivalent, and the pattern is matched against
+/// the folded input stream. Characters whose lowercase form expands to
+/// several characters participate fully (e.g. `ß` folds to `ss`, so
+/// `"groß"` matches `gro*ss` and `"GRÜSSE"` matches `grüße*`).
+///
+/// Because matching operates on the *folded* stream, `?` consumes exactly
+/// one folded character: an input `ß` counts as the two characters `ss`,
+/// and is matched by `??` rather than `?`.
 #[derive(PartialEq)]
 pub struct Glob {
     pattern: String,
@@ -61,8 +68,12 @@ impl Glob {
                     }
                 }
                 '?' => tokens.push(GlobToken::AnyChar),
-                '\\' => tokens.push(GlobToken::Literal(chars.next().unwrap_or('\\'))),
-                c => tokens.push(GlobToken::Literal(c)),
+                // Literal characters are case-folded at compile time so that
+                // matching can compare them directly against the folded input
+                // stream (multi-character expansions become several tokens).
+                '\\' => tokens
+                    .extend(casefold_char(chars.next().unwrap_or('\\')).map(GlobToken::Literal)),
+                c => tokens.extend(casefold_char(c).map(GlobToken::Literal)),
             }
         }
 
@@ -77,60 +88,61 @@ impl Glob {
         &self.pattern
     }
 
-    /// Tests whether the entire input matches this pattern.
+    /// Tests whether the entire (case-folded) input matches this pattern.
     ///
     /// This uses an iterative two-pointer algorithm with single-star
-    /// backtracking, performing no heap allocation regardless of the input or
-    /// pattern.
+    /// backtracking over the folded character stream, performing no heap
+    /// allocation regardless of the input or pattern: the stream positions
+    /// used for backtracking are cheap clones of the folding iterator.
     pub fn is_match(&self, input: &str) -> bool {
         let tokens = &self.tokens;
         let mut t = 0; // Index of the pattern token being matched.
-        let mut s = 0; // Byte offset of the input character being matched.
+        let mut chars = casefold(input).peekable();
 
-        // The token index following the most recent `*`, along with the byte
-        // offset at which that `*` should resume consuming input if the
-        // remainder of the pattern fails to match.
-        let mut star: Option<(usize, usize)> = None;
+        // The token index following the most recent `*`, along with the
+        // stream position at which that `*` should resume consuming input if
+        // the remainder of the pattern fails to match.
+        let mut star = None;
 
-        while s < input.len() {
-            // SAFETY OF UNWRAP: `s` always sits on a character boundary, and
-            // `s < input.len()`, so there is always a next character.
-            let c = input[s..].chars().next().unwrap();
-            match tokens.get(t) {
+        loop {
+            let progressed = match tokens.get(t) {
                 Some(GlobToken::AnySequence) => {
-                    star = Some((t + 1, s));
                     t += 1;
+                    star = Some((t, chars.clone()));
+                    true
                 }
                 Some(GlobToken::AnyChar) => {
                     t += 1;
-                    s += c.len_utf8();
+                    chars.next().is_some()
                 }
-                Some(GlobToken::Literal(p)) if chars_eq(*p, c) => {
+                Some(GlobToken::Literal(p)) if chars.peek() == Some(p) => {
                     t += 1;
-                    s += c.len_utf8();
+                    chars.next();
+                    true
                 }
-                _ => {
-                    // Mismatch (or pattern exhausted): backtrack to the most
-                    // recent `*` and let it swallow one more input character.
-                    if let Some((star_t, star_s)) = star {
-                        let swallowed = input[star_s..].chars().next().unwrap();
-                        let resume = star_s + swallowed.len_utf8();
-                        star = Some((star_t, resume));
+                Some(GlobToken::Literal(..)) => false,
+                // Pattern exhausted: this is a match iff the input is too.
+                None if chars.peek().is_none() => return true,
+                None => false,
+            };
+
+            if !progressed {
+                // Mismatch: backtrack to the most recent `*` and let it
+                // swallow one more character of the folded input.
+                match star.take() {
+                    Some((star_t, mut star_chars)) => {
+                        if star_chars.next().is_none() {
+                            return false;
+                        }
+
                         t = star_t;
-                        s = resume;
-                    } else {
-                        return false;
+                        chars = star_chars.clone();
+                        star = Some((star_t, star_chars));
                     }
+                    None => return false,
                 }
             }
         }
-
-        // Any trailing `*`s can match the empty remainder of the input.
-        while tokens.get(t) == Some(&GlobToken::AnySequence) {
-            t += 1;
-        }
-
-        t == tokens.len()
     }
 }
 
@@ -259,8 +271,15 @@ mod tests {
     #[case("???", "hé", false)]
     #[case("h?llo", "héllo", true)]
     #[case("*ö*", "schön", true)]
-    #[case("grüße*", "GRÜSSE", false)] // ß does not case-fold to "ss" per-char
     #[case("über*", "ÜBERMUT", true)]
+    // Multi-character folds participate fully: ß folds to ss on either side.
+    #[case("grüße*", "GRÜSSE", true)]
+    #[case("GRÜSSE", "grüße", true)]
+    #[case("*ss", "groß", true)]
+    #[case("stra*e", "STRASSE", true)]
+    // `?` consumes one character of the *folded* input, so ß counts as two.
+    #[case("gro?", "groß", false)]
+    #[case("gro??", "groß", true)]
     // Greek sigma forms are equivalent, consistent with contains/startswith/endswith.
     #[case("λογος", "ΛΟΓΟΣ", true)]
     #[case("ΛΟΓΟΣ", "λογος", true)]

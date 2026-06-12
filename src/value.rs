@@ -1,7 +1,9 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display};
 
-use crate::case_sensitivity::{caseless_contains, caseless_ends_with, caseless_starts_with};
+use crate::case_sensitivity::{
+    caseless_contains, caseless_ends_with, caseless_eq, caseless_starts_with,
+};
 
 /// A trait for types which can be filtered by the filter system.
 ///
@@ -69,12 +71,19 @@ pub trait Filterable {
 ///
 /// Note that string equality comparisons between `FilterValue`s are
 /// case-insensitive, mirroring the behaviour of the filter language itself.
+/// Case is folded character-by-character using the language's Unicode
+/// case-folding rules (with all Greek sigma forms treated as equivalent),
+/// so multi-character folds such as `ß` → `ss` compare equal too.
 ///
 /// ```
 /// use filters::FilterValue;
 ///
 /// let a: FilterValue = "Hello".into();
 /// let b: FilterValue = "hello".into();
+/// assert_eq!(a, b);
+///
+/// let a: FilterValue = "STRASSE".into();
+/// let b: FilterValue = "straße".into();
 /// assert_eq!(a, b);
 /// ```
 #[derive(Clone, Default)]
@@ -124,10 +133,12 @@ impl FilterValue {
     /// combinations return `false`. This powers the `contains` and `in`
     /// operators in the filter language.
     ///
-    /// The string comparison lowercases both operands character-by-character
-    /// without allocating. This matches [`str::to_lowercase`] except that all
-    /// Greek sigma forms (`Σ`, `σ`, and the final-position `ς`) are treated
-    /// as equivalent regardless of where they appear in a word.
+    /// The string comparison case-folds both operands character-by-character
+    /// without allocating, using the same Unicode case-folding rules as the
+    /// rest of the filter language: all Greek sigma forms (`Σ`, `σ`, and the
+    /// final-position `ς`) are treated as equivalent regardless of where they
+    /// appear in a word, and multi-character folds such as `ß` → `ss`
+    /// participate fully.
     ///
     /// ```
     /// use filters::FilterValue;
@@ -153,9 +164,9 @@ impl FilterValue {
     /// it checks whether any element is equal to `other`. This powers the
     /// `startswith` operator in the filter language.
     ///
-    /// The string comparison lowercases both operands character-by-character
-    /// without allocating, treating all Greek sigma forms as equivalent (see
-    /// [`FilterValue::contains`]).
+    /// The string comparison case-folds both operands character-by-character
+    /// without allocating, using the same Unicode case-folding rules as the
+    /// rest of the filter language (see [`FilterValue::contains`]).
     ///
     /// ```
     /// use filters::FilterValue;
@@ -178,9 +189,9 @@ impl FilterValue {
     /// it checks whether any element is equal to `other`. This powers the
     /// `endswith` operator in the filter language.
     ///
-    /// The string comparison lowercases both operands character-by-character
-    /// without allocating, treating all Greek sigma forms as equivalent (see
-    /// [`FilterValue::contains`]).
+    /// The string comparison case-folds both operands character-by-character
+    /// without allocating, using the same Unicode case-folding rules as the
+    /// rest of the filter language (see [`FilterValue::contains`]).
     ///
     /// ```
     /// use filters::FilterValue;
@@ -204,7 +215,7 @@ impl PartialEq for FilterValue {
             (FilterValue::Null, FilterValue::Null) => true,
             (FilterValue::Bool(a), FilterValue::Bool(b)) => a == b,
             (FilterValue::Number(a), FilterValue::Number(b)) => a == b,
-            (FilterValue::String(a), FilterValue::String(b)) => a.eq_ignore_ascii_case(b),
+            (FilterValue::String(a), FilterValue::String(b)) => caseless_eq(a, b),
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a == b)
             }
@@ -438,6 +449,21 @@ mod tests {
             FilterValue::String(String::from("Hello World")),
             FilterValue::String(String::from("goodbye world"))
         );
+
+        // Equality folds case using the language's Unicode case-folding
+        // rules, including non-ASCII characters and multi-character folds.
+        assert_eq!(
+            FilterValue::String(String::from("JÜRGEN")),
+            FilterValue::String(String::from("jürgen"))
+        );
+        assert_eq!(
+            FilterValue::String(String::from("ΛΟΓΟΣ")),
+            FilterValue::String(String::from("λογος"))
+        );
+        assert_eq!(
+            FilterValue::String(String::from("straße")),
+            FilterValue::String(String::from("STRASSE"))
+        );
     }
 
     #[test]
@@ -595,13 +621,16 @@ mod tests {
         assert!(haystack.contains(&needle));
     }
 
-    /// Characters whose lowercase form expands to multiple characters (such
-    /// as `İ`, which lowercases to `i` followed by a combining dot above)
-    /// are handled the same way `str::to_lowercase` would handle them.
+    /// Characters whose case-folded form expands to multiple characters
+    /// (such as `İ`, which folds to `i` followed by a combining dot above,
+    /// or `ß`, which folds to `ss`) participate fully in the comparison.
     #[rstest]
-    #[case("İstanbul", "i\u{307}stanbul", true)] // expanded lowercase form
+    #[case("İstanbul", "i\u{307}stanbul", true)] // expanded folded form
     #[case("İstanbul", "\u{307}stanbul", true)] // matches mid-expansion, as str::contains would
     #[case("İstanbul", "istanbul", false)] // the combining mark is significant
+    #[case("straße", "STRASSE", true)] // ß folds to ss
+    #[case("groß", "ss", true)]
+    #[case("gross", "ß", true)] // ...in the needle too
     fn test_multi_char_lowercase_expansions(
         #[case] haystack: &str,
         #[case] needle: &str,

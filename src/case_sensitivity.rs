@@ -1,46 +1,34 @@
 //! Centralized case-insensitivity rules for the filter language.
 //!
-//! Most of the filter language's string operations compare case-insensitively
-//! (`contains`, `startswith`, `endswith`, and the `like` glob operator). All
-//! of those comparisons are routed through this module so that every operator
-//! folds case in exactly the same way.
+//! All of the filter language's case-insensitive string operations (`==`,
+//! `contains`, `startswith`, `endswith`, and the `like` glob operator) are
+//! routed through this module so that every operator folds case in exactly
+//! the same way.
 //!
-//! Folding is performed character-by-character using [`char::to_lowercase`]
-//! (which never allocates), with one refinement: the Greek word-final sigma
-//! (`ς`) is normalized to the regular lowercase sigma (`σ`), so all three
-//! sigma forms (`Σ`, `σ`, `ς`) compare equal regardless of their position
-//! within a word. [`str::to_lowercase`]'s context-sensitive final-sigma rule
-//! would make results depend on position; folding to a single form mirrors
-//! Unicode simple case folding and keeps comparisons symmetric.
+//! Each character is folded through a lowercase → uppercase → lowercase
+//! round-trip (using [`char::to_lowercase`]/[`char::to_uppercase`], which
+//! never allocate). This closely approximates Unicode full case folding and
+//! has two properties a plain lowercase pass lacks:
 //!
-//! Note that string *equality* (`==`) deliberately uses ASCII-only case
-//! folding ([`str::eq_ignore_ascii_case`]) and does not go through this
-//! module — that pre-existing asymmetry is pinned by the crate's behavioural
-//! tests.
-
-/// Folds a lowercase Greek final sigma (`ς`) into the regular lowercase
-/// sigma (`σ`), mirroring Unicode simple case folding.
-///
-/// [`char::to_lowercase`] always produces `σ` for an uppercase `Σ` (it has
-/// no knowledge of the character's position within a word), so folding `ς`
-/// as well makes the case-insensitive comparisons in this module treat all
-/// three sigma forms as equivalent regardless of their position.
-fn fold_sigma(c: char) -> char {
-    if c == 'ς' { 'σ' } else { c }
-}
+//! - Characters whose uppercase form expands to several characters fold to
+//!   that expansion's lowercase form: `ß` and `ẞ` both fold to `ss`, so
+//!   `"STRASSE" == "straße"` and `"groß" like "*ss"` both hold.
+//! - The Greek sigma forms all fold to a single character (`ς` → `Σ` → `σ`),
+//!   so `Σ`, `σ`, and `ς` compare equal regardless of their position within
+//!   a word — [`str::to_lowercase`]'s context-sensitive final-sigma rule
+//!   would make results depend on position instead.
 
 /// Iterates over the case-folded form of a single character without
-/// allocating. Lowercase expansions may span multiple characters (e.g. `İ`
-/// lowercases to `i` followed by a combining dot above).
-fn casefold_char(c: char) -> impl Iterator<Item = char> + Clone {
-    c.to_lowercase().map(fold_sigma)
+/// allocating, by round-tripping it through lowercase → uppercase →
+/// lowercase. Folded forms may span multiple characters (e.g. `İ` folds to
+/// `i` followed by a combining dot above, and `ß` folds to `ss`).
+pub(crate) fn casefold_char(c: char) -> impl DoubleEndedIterator<Item = char> + Clone {
+    c.to_lowercase()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
 }
 
 /// Iterates over the case-folded characters of a string without allocating.
-///
-/// This matches the characters produced by [`str::to_lowercase`] except for
-/// the Greek final-sigma context rule: all sigma forms are normalized to
-/// `σ` (see [`fold_sigma`]).
 pub(crate) fn casefold(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
     s.chars().flat_map(casefold_char)
 }
@@ -48,20 +36,14 @@ pub(crate) fn casefold(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
 /// Iterates over the case-folded characters of a string in reverse order
 /// without allocating. Equivalent to reversing [`casefold`].
 pub(crate) fn casefold_rev(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
-    s.chars()
-        .rev()
-        .flat_map(|c| c.to_lowercase().rev().map(fold_sigma))
+    s.chars().rev().flat_map(|c| casefold_char(c).rev())
 }
 
-/// Determines whether two characters are equal under this module's case
-/// folding rules, comparing their folded expansions without allocating.
-///
-/// This is the single-character counterpart of [`casefold`], used by the
-/// glob matcher (where `?` and `*` consume whole input characters, so
-/// literal characters are compared pairwise). Multi-character expansions
-/// (e.g. `İ`) only compare equal to characters with the same expansion.
-pub(crate) fn chars_eq(a: char, b: char) -> bool {
-    a == b || casefold_char(a).eq(casefold_char(b))
+/// Determines whether two strings are equal under this module's case
+/// folding rules, comparing their folded character streams without
+/// allocating. This powers the `==` and `!=` operators for strings.
+pub(crate) fn caseless_eq(a: &str, b: &str) -> bool {
+    casefold(a).eq(casefold(b))
 }
 
 /// Determines whether `prefix` is a prefix of `haystack`, comparing the
@@ -113,24 +95,23 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case('a', 'a', true)]
-    #[case('a', 'A', true)]
-    #[case('A', 'a', true)]
-    #[case('a', 'b', false)]
-    #[case('ü', 'Ü', true)]
+    #[case("hello", "hello", true)]
+    #[case("Hello", "hELLO", true)]
+    #[case("hello", "hellos", false)]
+    #[case("", "", true)]
+    #[case("Jürgen", "JÜRGEN", true)]
     // All Greek sigma forms are equivalent, regardless of position.
-    #[case('σ', 'ς', true)]
-    #[case('ς', 'σ', true)]
-    #[case('Σ', 'ς', true)]
-    #[case('Σ', 'σ', true)]
-    // Multi-character expansions only equal characters with the same expansion.
-    #[case('İ', 'İ', true)]
-    #[case('İ', 'i', false)]
-    #[case('ß', 'ß', true)]
-    #[case('ß', 's', false)]
-    fn test_chars_eq(#[case] a: char, #[case] b: char, #[case] expected: bool) {
-        assert_eq!(chars_eq(a, b), expected);
-        assert_eq!(chars_eq(b, a), expected);
+    #[case("ΛΟΓΟΣ", "λογος", true)]
+    #[case("λογοσ", "λογος", true)]
+    // Multi-character expansions participate in equality.
+    #[case("straße", "STRASSE", true)]
+    #[case("straße", "strasse", true)]
+    #[case("straẞe", "strasse", true)] // capital sharp s folds like ß
+    #[case("İstanbul", "i\u{307}stanbul", true)]
+    #[case("İstanbul", "istanbul", false)] // the combining mark is significant
+    fn test_caseless_eq(#[case] a: &str, #[case] b: &str, #[case] expected: bool) {
+        assert_eq!(caseless_eq(a, b), expected);
+        assert_eq!(caseless_eq(b, a), expected);
     }
 
     #[rstest]
@@ -138,6 +119,8 @@ mod tests {
     #[case("ΛΟΓΟΣ", "λογοσ")] // final sigma folds to σ, not ς
     #[case("λογος", "λογοσ")]
     #[case("İstanbul", "i\u{307}stanbul")]
+    #[case("straße", "strasse")] // ß folds through SS to ss
+    #[case("STRASSE", "strasse")]
     fn test_casefold(#[case] input: &str, #[case] expected: &str) {
         assert_eq!(casefold(input).collect::<String>(), expected);
         assert_eq!(

@@ -100,8 +100,10 @@
 //! any sequence of characters (including none), `?` matches exactly one
 //! character, and a backslash makes the following character literal (`\*`,
 //! `\?`, `\\`); character classes like `[a-z]` are **not** supported. Like
-//! the rest of the language, matching is case-insensitive (each character is
-//! compared by its Unicode lowercase expansion).
+//! the rest of the language, matching is case-insensitive: both the pattern
+//! and the input are folded using the language's Unicode case-folding rules,
+//! including multi-character folds (`"groß" like "*ss"` holds, and `?`
+//! counts folded characters, so `ß` counts as two).
 //!
 //! ```
 //! use filters::{Filter, FilterValue, Filterable};
