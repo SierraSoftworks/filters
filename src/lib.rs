@@ -185,6 +185,7 @@
     html_favicon_url = "https://raw.githubusercontent.com/SierraSoftworks/filters/main/assets/icon.svg"
 )]
 
+mod case_sensitivity;
 mod expr;
 mod interpreter;
 mod lexer;

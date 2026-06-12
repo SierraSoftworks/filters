@@ -1,76 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display};
 
-/// Folds a lowercase Greek final sigma (`ς`) into the regular lowercase
-/// sigma (`σ`), mirroring Unicode simple case folding.
-///
-/// [`char::to_lowercase`] always produces `σ` for an uppercase `Σ` (it has
-/// no knowledge of the character's position within a word), so folding `ς`
-/// as well makes the case-insensitive comparisons below treat all three
-/// sigma forms as equivalent regardless of their position.
-fn fold_sigma(c: char) -> char {
-    if c == 'ς' { 'σ' } else { c }
-}
-
-/// Iterates over the case-folded characters of a string without allocating.
-///
-/// This matches the characters produced by [`str::to_lowercase`] except for
-/// the Greek final-sigma context rule: all sigma forms are normalized to
-/// `σ` (see [`fold_sigma`]).
-fn casefold(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
-    s.chars().flat_map(char::to_lowercase).map(fold_sigma)
-}
-
-/// Iterates over the case-folded characters of a string in reverse order
-/// without allocating. Equivalent to reversing [`casefold`].
-fn casefold_rev(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
-    s.chars()
-        .rev()
-        .flat_map(|c| c.to_lowercase().rev())
-        .map(fold_sigma)
-}
-
-/// Determines whether `prefix` is a prefix of `haystack`, comparing the
-/// two character streams element-wise.
-fn is_char_prefix(
-    mut haystack: impl Iterator<Item = char>,
-    prefix: impl Iterator<Item = char>,
-) -> bool {
-    for c in prefix {
-        if haystack.next() != Some(c) {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Determines whether the case-folded `needle` appears anywhere within the
-/// case-folded `haystack`, without allocating.
-fn caseless_contains(haystack: &str, needle: &str) -> bool {
-    let mut start = casefold(haystack);
-    loop {
-        if is_char_prefix(start.clone(), casefold(needle)) {
-            return true;
-        }
-
-        if start.next().is_none() {
-            return false;
-        }
-    }
-}
-
-/// Determines whether the case-folded `haystack` starts with the
-/// case-folded `needle`, without allocating.
-fn caseless_starts_with(haystack: &str, needle: &str) -> bool {
-    is_char_prefix(casefold(haystack), casefold(needle))
-}
-
-/// Determines whether the case-folded `haystack` ends with the case-folded
-/// `needle`, without allocating.
-fn caseless_ends_with(haystack: &str, needle: &str) -> bool {
-    is_char_prefix(casefold_rev(haystack), casefold_rev(needle))
-}
+use crate::case_sensitivity::{caseless_contains, caseless_ends_with, caseless_starts_with};
 
 /// A trait for types which can be filtered by the filter system.
 ///

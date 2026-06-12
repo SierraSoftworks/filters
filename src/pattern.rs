@@ -6,6 +6,8 @@
 
 use std::fmt::{Debug, Display};
 
+use crate::case_sensitivity::chars_eq;
+
 /// A single element of a compiled glob pattern.
 #[derive(PartialEq)]
 enum GlobToken {
@@ -30,9 +32,11 @@ enum GlobToken {
 ///
 /// Character classes (`[a-z]`) and alternation (`{a,b}`) are *not* supported.
 ///
-/// Matching is case-insensitive: two characters are considered equal when
-/// their Unicode lowercase expansions (via [`char::to_lowercase`]) are equal.
-/// This is a per-character ("simple") case fold, so multi-character lowercase
+/// Matching is case-insensitive, using the same character folding rules as
+/// the rest of the filter language (see [`crate::case_sensitivity`]): two
+/// characters are equal when their folded expansions are equal, with all
+/// Greek sigma forms (`Σ`, `σ`, `ς`) treated as equivalent. This is a
+/// per-character ("simple") case fold, so multi-character lowercase
 /// expansions (e.g. `İ` → `i̇`) only compare equal to themselves, and `?`
 /// always consumes exactly one character of the input.
 #[derive(PartialEq)]
@@ -101,7 +105,7 @@ impl Glob {
                     t += 1;
                     s += c.len_utf8();
                 }
-                Some(GlobToken::Literal(p)) if chars_eq_ignore_case(*p, c) => {
+                Some(GlobToken::Literal(p)) if chars_eq(*p, c) => {
                     t += 1;
                     s += c.len_utf8();
                 }
@@ -128,12 +132,6 @@ impl Glob {
 
         t == tokens.len()
     }
-}
-
-/// Compares two characters case-insensitively using their full Unicode
-/// lowercase expansions, without allocating.
-fn chars_eq_ignore_case(a: char, b: char) -> bool {
-    a == b || a.to_lowercase().eq(b.to_lowercase())
 }
 
 impl Display for Glob {
@@ -263,6 +261,12 @@ mod tests {
     #[case("*ö*", "schön", true)]
     #[case("grüße*", "GRÜSSE", false)] // ß does not case-fold to "ss" per-char
     #[case("über*", "ÜBERMUT", true)]
+    // Greek sigma forms are equivalent, consistent with contains/startswith/endswith.
+    #[case("λογος", "ΛΟΓΟΣ", true)]
+    #[case("ΛΟΓΟΣ", "λογος", true)]
+    #[case("*ς", "ΛΟΓΟΣ", true)]
+    #[case("*σ", "λογος", true)]
+    #[case("σ", "ς", true)]
     // Escapes make wildcards literal.
     #[case("a\\*b", "a*b", true)]
     #[case("a\\*b", "axb", false)]
