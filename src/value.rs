@@ -207,6 +207,98 @@ impl FilterValue {
             _ => false,
         }
     }
+
+    /// Determines whether this value is equal to the provided value, comparing
+    /// strings case-*sensitively*.
+    ///
+    /// This is the case-sensitive counterpart of the `==` operator (and the
+    /// [`PartialEq`] implementation): tuples compare their elements with
+    /// `eq_cs` recursively, and all other variants behave exactly as `==`
+    /// does. It underpins tuple membership for the `contains_cs` and `in_cs`
+    /// operators in the filter language.
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    ///
+    /// let value: FilterValue = "Hello".into();
+    /// assert!(value.eq_cs(&"Hello".into()));
+    /// assert!(!value.eq_cs(&"hello".into()));
+    /// ```
+    pub fn eq_cs(&self, other: &FilterValue) -> bool {
+        match (self, other) {
+            (FilterValue::String(a), FilterValue::String(b)) => a == b,
+            (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a.eq_cs(b))
+            }
+            _ => self == other,
+        }
+    }
+
+    /// Determines whether this value contains the provided value, comparing
+    /// strings case-*sensitively*.
+    ///
+    /// This is the case-sensitive counterpart of [`FilterValue::contains`]:
+    /// tuples check whether any element is [`eq_cs`](FilterValue::eq_cs) to
+    /// `other`, strings perform an exact substring search, and all other
+    /// combinations return `false`. This powers the `contains_cs` and `in_cs`
+    /// operators in the filter language.
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    ///
+    /// let haystack: FilterValue = "Hello World".into();
+    /// assert!(haystack.contains_cs(&"World".into()));
+    /// assert!(!haystack.contains_cs(&"world".into()));
+    /// ```
+    pub fn contains_cs(&self, other: &FilterValue) -> bool {
+        match (self, other) {
+            (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
+            (FilterValue::String(a), FilterValue::String(b)) => a.contains(b.as_str()),
+            _ => false,
+        }
+    }
+
+    /// Determines whether this value starts with the provided value, comparing
+    /// strings case-*sensitively*.
+    ///
+    /// This is the case-sensitive counterpart of [`FilterValue::startswith`],
+    /// powering the `startswith_cs` operator in the filter language.
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    ///
+    /// let value: FilterValue = "Hello World".into();
+    /// assert!(value.startswith_cs(&"Hello".into()));
+    /// assert!(!value.startswith_cs(&"hello".into()));
+    /// ```
+    pub fn startswith_cs(&self, other: &FilterValue) -> bool {
+        match (self, other) {
+            (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
+            (FilterValue::String(a), FilterValue::String(b)) => a.starts_with(b.as_str()),
+            _ => false,
+        }
+    }
+
+    /// Determines whether this value ends with the provided value, comparing
+    /// strings case-*sensitively*.
+    ///
+    /// This is the case-sensitive counterpart of [`FilterValue::endswith`],
+    /// powering the `endswith_cs` operator in the filter language.
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    ///
+    /// let value: FilterValue = "Hello World".into();
+    /// assert!(value.endswith_cs(&"World".into()));
+    /// assert!(!value.endswith_cs(&"WORLD".into()));
+    /// ```
+    pub fn endswith_cs(&self, other: &FilterValue) -> bool {
+        match (self, other) {
+            (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
+            (FilterValue::String(a), FilterValue::String(b)) => a.ends_with(b.as_str()),
+            _ => false,
+        }
+    }
 }
 
 impl PartialEq for FilterValue {
@@ -596,6 +688,64 @@ mod tests {
     #[test]
     fn test_default_is_null() {
         assert_eq!(FilterValue::default(), FilterValue::Null);
+    }
+
+    #[rstest]
+    #[case("Hello".into(), "Hello".into(), true)]
+    #[case("Hello".into(), "hello".into(), false)]
+    #[case("straße".into(), "STRASSE".into(), false)] // no case folding at all
+    #[case(FilterValue::Null, FilterValue::Null, true)]
+    #[case(FilterValue::Bool(true), FilterValue::Bool(true), true)]
+    #[case(FilterValue::Number(1.0), FilterValue::Number(1.0), true)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["A".into()]), true)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["a".into()]), false)]
+    #[case("1".into(), FilterValue::Number(1.0), false)]
+    fn test_eq_cs(#[case] left: FilterValue, #[case] right: FilterValue, #[case] expected: bool) {
+        assert_eq!(left.eq_cs(&right), expected);
+        assert_eq!(right.eq_cs(&left), expected);
+    }
+
+    #[rstest]
+    #[case("Hello World".into(), "World".into(), true)]
+    #[case("Hello World".into(), "world".into(), false)]
+    #[case(FilterValue::Tuple(vec!["a".into(), "B".into()]), "B".into(), true)]
+    #[case(FilterValue::Tuple(vec!["a".into(), "B".into()]), "b".into(), false)]
+    #[case(FilterValue::Null, FilterValue::Null, false)]
+    #[case(FilterValue::Number(12.0), FilterValue::Number(2.0), false)]
+    fn test_contains_cs(
+        #[case] value: FilterValue,
+        #[case] other: FilterValue,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(value.contains_cs(&other), expected);
+    }
+
+    #[rstest]
+    #[case("Hello World".into(), "Hello".into(), true)]
+    #[case("Hello World".into(), "hello".into(), false)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), "A".into(), true)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), "a".into(), false)]
+    #[case(FilterValue::Null, "a".into(), false)]
+    fn test_startswith_cs(
+        #[case] value: FilterValue,
+        #[case] other: FilterValue,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(value.startswith_cs(&other), expected);
+    }
+
+    #[rstest]
+    #[case("Hello World".into(), "World".into(), true)]
+    #[case("Hello World".into(), "WORLD".into(), false)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), "A".into(), true)]
+    #[case(FilterValue::Tuple(vec!["A".into()]), "a".into(), false)]
+    #[case(FilterValue::Null, "a".into(), false)]
+    fn test_endswith_cs(
+        #[case] value: FilterValue,
+        #[case] other: FilterValue,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(value.endswith_cs(&other), expected);
     }
 
     /// The case-insensitive string operations treat all Greek sigma forms

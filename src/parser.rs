@@ -81,9 +81,13 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
         if matches!(
             self.tokens.peek(),
             Some(Ok(Token::In(..)))
+                | Some(Ok(Token::InCs(..)))
                 | Some(Ok(Token::Contains(..)))
+                | Some(Ok(Token::ContainsCs(..)))
                 | Some(Ok(Token::StartsWith(..)))
+                | Some(Ok(Token::StartsWithCs(..)))
                 | Some(Ok(Token::EndsWith(..)))
+                | Some(Ok(Token::EndsWithCs(..)))
                 | Some(Ok(Token::GreaterThan(..)))
                 | Some(Ok(Token::GreaterEqual(..)))
                 | Some(Ok(Token::SmallerThan(..)))
@@ -92,10 +96,24 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             let token = self.tokens.next().unwrap()?;
             let right = self.unary()?;
             expr = Expr::Binary(Box::new(expr), token, Box::new(right));
-        } else if matches!(self.tokens.peek(), Some(Ok(Token::Like(..)))) {
+        } else if matches!(
+            self.tokens.peek(),
+            Some(Ok(Token::Like(..))) | Some(Ok(Token::LikeCs(..)))
+        ) {
             let token = self.tokens.next().unwrap()?;
-            let pattern = self.pattern_literal(&token, "branch.name like \"feat/*\"")?;
-            expr = Expr::Like(Box::new(expr), Glob::compile(&pattern));
+            let case_sensitive = matches!(token, Token::LikeCs(..));
+            let example = if case_sensitive {
+                "branch.name like_cs \"feat/*\""
+            } else {
+                "branch.name like \"feat/*\""
+            };
+            let pattern = self.pattern_literal(&token, example)?;
+            let glob = if case_sensitive {
+                Glob::compile_cs(&pattern)
+            } else {
+                Glob::compile(&pattern)
+            };
+            expr = Expr::Like(Box::new(expr), glob);
         } else if matches!(self.tokens.peek(), Some(Ok(Token::Matches(..)))) {
             let token = self.tokens.next().unwrap()?;
 
@@ -316,6 +334,10 @@ mod tests {
     #[case("1 > 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::GreaterThan(Loc::new(1, 2)), Box::new(Expr::Literal(2.0.into()))))]
     #[case("1 <= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::SmallerEqual(Loc::new(1, 3)), Box::new(Expr::Literal(2.0.into()))))]
     #[case("1 >= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::GreaterEqual(Loc::new(1, 3)), Box::new(Expr::Literal(2.0.into()))))]
+    #[case("\"xyz\" contains_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::ContainsCs(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
+    #[case("\"x\" in_cs \"xyz\"", Expr::Binary(Box::new(Expr::Literal("x".into())), Token::InCs(Loc::new(1, 5)), Box::new(Expr::Literal("xyz".into()))))]
+    #[case("\"xyz\" startswith_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::StartsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
+    #[case("\"xyz\" endswith_cs \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::EndsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("z".into()))))]
     fn parse_comparison_expressions(#[case] input: &str, #[case] ast: Expr) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -338,6 +360,14 @@ mod tests {
         Expr::Like(Box::new(Expr::Property("name")), Glob::compile("say \"hi\""))
     )]
     #[case("\"feat/login\" like \"feat/*\"", Expr::Like(Box::new(Expr::Literal("feat/login".into())), Glob::compile("feat/*")))]
+    #[case(
+        "name like_cs \"Feat/*\"",
+        Expr::Like(Box::new(Expr::Property("name")), Glob::compile_cs("Feat/*"))
+    )]
+    #[case(
+        "name like_cs r\"Feat/\\*\"",
+        Expr::Like(Box::new(Expr::Property("name")), Glob::compile_cs("Feat/\\*"))
+    )]
     fn parsing_like_expressions(#[case] input: &str, #[case] ast: Expr) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -414,6 +444,10 @@ mod tests {
     #[case(
         "name like other.name",
         "The 'like' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found 'other.name' at line 1, column 11 instead"
+    )]
+    #[case(
+        "name like_cs other.name",
+        "The 'like_cs' operator at line 1, column 6 must be followed by its pattern as a string literal, but we found 'other.name' at line 1, column 14 instead"
     )]
     #[case(
         "name like 5",

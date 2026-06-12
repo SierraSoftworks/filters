@@ -66,9 +66,13 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
             Token::Equals(..) => left == right,
             Token::NotEquals(..) => left != right,
             Token::Contains(..) => left.contains(right),
+            Token::ContainsCs(..) => left.contains_cs(right),
             Token::In(..) => right.contains(left),
+            Token::InCs(..) => right.contains_cs(left),
             Token::StartsWith(..) => left.startswith(right),
+            Token::StartsWithCs(..) => left.startswith_cs(right),
             Token::EndsWith(..) => left.endswith(right),
+            Token::EndsWithCs(..) => left.endswith_cs(right),
             Token::GreaterThan(..) => left.gt(right),
             Token::SmallerThan(..) => left.lt(right),
             Token::GreaterEqual(..) => left.ge(right),
@@ -270,6 +274,29 @@ mod tests {
     #[case("string startswith null", false)]
     #[case("null startswith null", false)]
     fn startswith(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    // The `_cs` operators behave like their counterparts, but compare
+    // strings case-sensitively.
+    #[case("string contains_cs \"Ali\"", true)]
+    #[case("string contains_cs \"ali\"", false)]
+    #[case("string contains \"ali\"", true)]
+    #[case("tuple contains_cs true", true)]
+    #[case("null contains_cs null", false)]
+    #[case("\"Ali\" in_cs string", true)]
+    #[case("\"ali\" in_cs string", false)]
+    #[case("true in_cs tuple", true)]
+    #[case("string startswith_cs \"Ali\"", true)]
+    #[case("string startswith_cs \"ali\"", false)]
+    #[case("string startswith \"ali\"", true)]
+    #[case("string startswith_cs null", false)]
+    #[case("string endswith_cs \"ice\"", true)]
+    #[case("string endswith_cs \"ICE\"", false)]
+    #[case("string endswith \"ICE\"", true)]
+    #[case("null endswith_cs null", false)]
+    fn case_sensitive_operators(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
     }
 
