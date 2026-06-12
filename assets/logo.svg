@@ -1,0 +1,41 @@
+<svg viewBox="0 0 560 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="filters">
+  <title>filters — a human-friendly filter expression language</title>
+  <defs>
+    <linearGradient id="funnel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff7a70"/>
+      <stop offset="45%" stop-color="#e53935"/>
+      <stop offset="100%" stop-color="#8e1410"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="35%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rs" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff5f54"/>
+      <stop offset="100%" stop-color="#c62828"/>
+    </linearGradient>
+    <style>
+      .word { fill: #23272f; }
+      @media (prefers-color-scheme: dark) {
+        .word { fill: #f5f6f8; }
+      }
+    </style>
+  </defs>
+
+  <!-- Funnel icon with a shiny red gradient -->
+  <g stroke-linejoin="round">
+    <path d="M28 32 L132 32 L94 88 L94 142 L66 130 L66 88 Z"
+          fill="url(#funnel)" stroke="url(#funnel)" stroke-width="12"/>
+    <path d="M28 32 L132 32 L94 88 L94 142 L66 130 L66 88 Z"
+          fill="url(#gloss)" stroke="url(#gloss)" stroke-width="12"/>
+    <ellipse cx="62" cy="36" rx="32" ry="7" fill="#ffffff" opacity="0.35"/>
+    <rect x="70" y="94" width="7" height="34" rx="3.5" fill="#ffffff" opacity="0.28"/>
+  </g>
+
+  <!-- Wordmark, with the trailing "rs" highlighted in red -->
+  <text x="180" y="124" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-size="104" font-weight="800" letter-spacing="-2">
+    <tspan class="word" textLength="222" lengthAdjust="spacingAndGlyphs">filte</tspan><tspan fill="url(#rs)" textLength="104" lengthAdjust="spacingAndGlyphs">rs</tspan>
+  </text>
+</svg>

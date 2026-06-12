@@ -1,0 +1,30 @@
+[package]
+name = "filters"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A human-friendly filter expression language for matching your objects against user-provided queries."
+authors = ["Sierra Softworks <admin@sierrasoftworks.com>"]
+license = "MIT"
+repository = "https://github.com/SierraSoftworks/filters"
+homepage = "https://github.com/SierraSoftworks/filters"
+documentation = "https://docs.rs/filters"
+readme = "README.md"
+keywords = ["filter", "expression", "dsl", "query", "matching"]
+categories = ["parser-implementations"]
+exclude = [".github/", "assets/"]
+
+[dependencies]
+human-errors = "0.2.3"
+serde = { version = "1.0", optional = true }
+
+[features]
+default = []
+
+## Enables deserializing a [`Filter`] directly from configuration files using serde.
+serde = ["dep:serde"]
+
+[dev-dependencies]
+rstest = "0.26.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

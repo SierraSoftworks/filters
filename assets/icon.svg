@@ -1,0 +1,24 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="filters icon">
+  <title>filters</title>
+  <defs>
+    <linearGradient id="funnel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff7a70"/>
+      <stop offset="45%" stop-color="#e53935"/>
+      <stop offset="100%" stop-color="#8e1410"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="35%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <g stroke-linejoin="round">
+    <path d="M28 24 L132 24 L94 80 L94 134 L66 122 L66 80 Z"
+          fill="url(#funnel)" stroke="url(#funnel)" stroke-width="12"/>
+    <path d="M28 24 L132 24 L94 80 L94 134 L66 122 L66 80 Z"
+          fill="url(#gloss)" stroke="url(#gloss)" stroke-width="12"/>
+    <ellipse cx="62" cy="28" rx="32" ry="7" fill="#ffffff" opacity="0.35"/>
+    <rect x="70" y="86" width="7" height="34" rx="3.5" fill="#ffffff" opacity="0.28"/>
+  </g>
+</svg>
