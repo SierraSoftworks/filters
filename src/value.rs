@@ -1,6 +1,77 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display};
 
+/// Folds a lowercase Greek final sigma (`ς`) into the regular lowercase
+/// sigma (`σ`), mirroring Unicode simple case folding.
+///
+/// [`char::to_lowercase`] always produces `σ` for an uppercase `Σ` (it has
+/// no knowledge of the character's position within a word), so folding `ς`
+/// as well makes the case-insensitive comparisons below treat all three
+/// sigma forms as equivalent regardless of their position.
+fn fold_sigma(c: char) -> char {
+    if c == 'ς' { 'σ' } else { c }
+}
+
+/// Iterates over the case-folded characters of a string without allocating.
+///
+/// This matches the characters produced by [`str::to_lowercase`] except for
+/// the Greek final-sigma context rule: all sigma forms are normalized to
+/// `σ` (see [`fold_sigma`]).
+fn casefold(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
+    s.chars().flat_map(char::to_lowercase).map(fold_sigma)
+}
+
+/// Iterates over the case-folded characters of a string in reverse order
+/// without allocating. Equivalent to reversing [`casefold`].
+fn casefold_rev(s: &str) -> impl Iterator<Item = char> + Clone + '_ {
+    s.chars()
+        .rev()
+        .flat_map(|c| c.to_lowercase().rev())
+        .map(fold_sigma)
+}
+
+/// Determines whether `prefix` is a prefix of `haystack`, comparing the
+/// two character streams element-wise.
+fn is_char_prefix(
+    mut haystack: impl Iterator<Item = char>,
+    prefix: impl Iterator<Item = char>,
+) -> bool {
+    for c in prefix {
+        if haystack.next() != Some(c) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Determines whether the case-folded `needle` appears anywhere within the
+/// case-folded `haystack`, without allocating.
+fn caseless_contains(haystack: &str, needle: &str) -> bool {
+    let mut start = casefold(haystack);
+    loop {
+        if is_char_prefix(start.clone(), casefold(needle)) {
+            return true;
+        }
+
+        if start.next().is_none() {
+            return false;
+        }
+    }
+}
+
+/// Determines whether the case-folded `haystack` starts with the
+/// case-folded `needle`, without allocating.
+fn caseless_starts_with(haystack: &str, needle: &str) -> bool {
+    is_char_prefix(casefold(haystack), casefold(needle))
+}
+
+/// Determines whether the case-folded `haystack` ends with the case-folded
+/// `needle`, without allocating.
+fn caseless_ends_with(haystack: &str, needle: &str) -> bool {
+    is_char_prefix(casefold_rev(haystack), casefold_rev(needle))
+}
+
 /// A trait for types which can be filtered by the filter system.
 ///
 /// Types which implement this trait can be filtered through the use
@@ -122,6 +193,11 @@ impl FilterValue {
     /// combinations return `false`. This powers the `contains` and `in`
     /// operators in the filter language.
     ///
+    /// The string comparison lowercases both operands character-by-character
+    /// without allocating. This matches [`str::to_lowercase`] except that all
+    /// Greek sigma forms (`Σ`, `σ`, and the final-position `ς`) are treated
+    /// as equivalent regardless of where they appear in a word.
+    ///
     /// ```
     /// use filters::FilterValue;
     ///
@@ -135,9 +211,7 @@ impl FilterValue {
     pub fn contains(&self, other: &FilterValue) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
-            (FilterValue::String(a), FilterValue::String(b)) => {
-                a.to_lowercase().contains(&b.to_lowercase())
-            }
+            (FilterValue::String(a), FilterValue::String(b)) => caseless_contains(a, b),
             _ => false,
         }
     }
@@ -147,6 +221,10 @@ impl FilterValue {
     /// For strings, this performs a case-insensitive prefix test; for tuples,
     /// it checks whether any element is equal to `other`. This powers the
     /// `startswith` operator in the filter language.
+    ///
+    /// The string comparison lowercases both operands character-by-character
+    /// without allocating, treating all Greek sigma forms as equivalent (see
+    /// [`FilterValue::contains`]).
     ///
     /// ```
     /// use filters::FilterValue;
@@ -158,9 +236,7 @@ impl FilterValue {
     pub fn startswith(&self, other: &FilterValue) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
-            (FilterValue::String(a), FilterValue::String(b)) => {
-                a.to_lowercase().starts_with(&b.to_lowercase())
-            }
+            (FilterValue::String(a), FilterValue::String(b)) => caseless_starts_with(a, b),
             _ => false,
         }
     }
@@ -170,6 +246,10 @@ impl FilterValue {
     /// For strings, this performs a case-insensitive suffix test; for tuples,
     /// it checks whether any element is equal to `other`. This powers the
     /// `endswith` operator in the filter language.
+    ///
+    /// The string comparison lowercases both operands character-by-character
+    /// without allocating, treating all Greek sigma forms as equivalent (see
+    /// [`FilterValue::contains`]).
     ///
     /// ```
     /// use filters::FilterValue;
@@ -181,9 +261,7 @@ impl FilterValue {
     pub fn endswith(&self, other: &FilterValue) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
-            (FilterValue::String(a), FilterValue::String(b)) => {
-                a.to_lowercase().ends_with(&b.to_lowercase())
-            }
+            (FilterValue::String(a), FilterValue::String(b)) => caseless_ends_with(a, b),
             _ => false,
         }
     }
@@ -561,5 +639,46 @@ mod tests {
     #[test]
     fn test_default_is_null() {
         assert_eq!(FilterValue::default(), FilterValue::Null);
+    }
+
+    /// The case-insensitive string operations treat all Greek sigma forms
+    /// (`Σ`, `σ`, and the word-final `ς`) as equivalent, regardless of where
+    /// they appear within a word.
+    ///
+    /// This intentionally diverges from [`str::to_lowercase`]'s context
+    /// sensitive final-sigma rule (which would, for example, consider
+    /// `"ΛΟΓΟΣ"` *not* to end with `"Σ"` because the haystack lowercases to
+    /// `"λογος"` while the needle lowercases to `"σ"`). Folding every sigma
+    /// to `σ` mirrors Unicode simple case folding and gives
+    /// position-independent results.
+    #[rstest]
+    #[case("ΛΟΓΟΣ", "Σ")] // upper-case needle vs word-final position
+    #[case("ΛΟΓΟΣ", "ς")] // final-sigma needle
+    #[case("ΛΟΓΟΣ", "σ")] // regular-sigma needle
+    #[case("λογος", "Σ")] // word-final sigma in the haystack
+    fn test_greek_sigma_forms_are_equivalent(#[case] haystack: &str, #[case] needle: &str) {
+        let haystack: FilterValue = haystack.into();
+        let needle: FilterValue = needle.into();
+
+        assert!(haystack.endswith(&needle));
+        assert!(haystack.contains(&needle));
+    }
+
+    /// Characters whose lowercase form expands to multiple characters (such
+    /// as `İ`, which lowercases to `i` followed by a combining dot above)
+    /// are handled the same way `str::to_lowercase` would handle them.
+    #[rstest]
+    #[case("İstanbul", "i\u{307}stanbul", true)] // expanded lowercase form
+    #[case("İstanbul", "\u{307}stanbul", true)] // matches mid-expansion, as str::contains would
+    #[case("İstanbul", "istanbul", false)] // the combining mark is significant
+    fn test_multi_char_lowercase_expansions(
+        #[case] haystack: &str,
+        #[case] needle: &str,
+        #[case] expected: bool,
+    ) {
+        let haystack: FilterValue = haystack.into();
+        let needle: FilterValue = needle.into();
+
+        assert_eq!(haystack.contains(&needle), expected);
     }
 }

@@ -153,6 +153,12 @@ struct BackupPolicy {
 Missing or `null` filter fields deserialize to the match-everything filter
 `true`, so optional filters work out of the box.
 
+## Performance
+
+Filters are parsed once and may then be evaluated against any number of
+objects. Evaluation is allocation-free except for the owned `FilterValue`s
+your `Filterable::get` implementation returns.
+
 ## Error messages
 
 Errors are designed to be shown directly to the people writing the filters:

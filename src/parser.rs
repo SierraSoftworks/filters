@@ -174,7 +174,13 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 format!("Failed to parse the number '{n}' which you provided at {}.", loc),
                 &["Please make sure that the number is well formatted. It should be in the form 123, or 123.45."],
             )?)),
-            Some(Ok(Token::String(.., s))) => Ok(s.replace("\\\"", "\"").replace("\\\\", "\\").into()),
+            Some(Ok(Token::String(.., s))) => Ok(if s.contains('\\') {
+                s.replace("\\\"", "\"").replace("\\\\", "\\").into()
+            } else {
+                // Fast path: strings without escape sequences don't need the
+                // (allocating) replacement passes above.
+                s.into()
+            }),
             Some(Ok(Token::Null(..))) => Ok(FilterValue::Null),
             Some(Ok(token)) => Err(human_errors::user(
                 format!("While parsing your filter, we found an unexpected '{}' at {}.", token, token.location()),

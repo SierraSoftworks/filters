@@ -81,10 +81,9 @@ impl<'a> Scanner<'a> {
         let mut end = start + self.advance_while_fn(|_, c| c.is_numeric());
         if let Some((loc, c)) = self.chars.peek()
             && *c == '.'
-            && self
-                .source
+            && self.source[loc + 1..]
                 .chars()
-                .nth(loc + 1)
+                .next()
                 .map(|c2| c2.is_numeric())
                 .unwrap_or_default()
         {

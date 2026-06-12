@@ -238,6 +238,16 @@ mod strings {
     fn strings_spanning_lines_are_supported() {
         assert!(matches("\"multi\nline\" contains \"multi\""));
     }
+
+    #[test]
+    fn greek_sigma_forms_are_interchangeable() {
+        // The case-insensitive operators fold all Greek sigma forms (Σ, σ,
+        // and the word-final ς) together, so sigma comparisons do not depend
+        // on where the character appears within a word.
+        assert!(matches(r#""ΛΟΓΟΣ" endswith "Σ""#));
+        assert!(matches(r#""ΛΟΓΟΣ" endswith "ς""#));
+        assert!(matches(r#""λογος" contains "ΓΟΣ""#));
+    }
 }
 
 mod tuples {

@@ -14,8 +14,14 @@ pub enum Expr<'a> {
     Unary(Token<'a>, Box<Expr<'a>>),
 }
 
-pub trait ExprVisitor<T> {
-    fn visit_expr(&mut self, expr: &Expr) -> T {
+/// A visitor over [`Expr`] trees.
+///
+/// The `'a` lifetime ties the visited nodes to the expression tree itself,
+/// allowing visitors to produce values which *borrow* from the AST (for
+/// example, the interpreter returns `Cow::Borrowed` for literal values
+/// rather than cloning them on every evaluation).
+pub trait ExprVisitor<'a, T> {
+    fn visit_expr(&mut self, expr: &'a Expr<'a>) -> T {
         match expr {
             Expr::Literal(value) => self.visit_literal(value),
             Expr::Property(name) => self.visit_property(name),
@@ -25,11 +31,21 @@ pub trait ExprVisitor<T> {
         }
     }
 
-    fn visit_literal(&mut self, value: &FilterValue) -> T;
-    fn visit_property(&mut self, name: &str) -> T;
-    fn visit_binary(&mut self, left: &Expr, operator: &Token, right: &Expr) -> T;
-    fn visit_logical(&mut self, left: &Expr, operator: &Token, right: &Expr) -> T;
-    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> T;
+    fn visit_literal(&mut self, value: &'a FilterValue) -> T;
+    fn visit_property(&mut self, name: &'a str) -> T;
+    fn visit_binary(
+        &mut self,
+        left: &'a Expr<'a>,
+        operator: &'a Token<'a>,
+        right: &'a Expr<'a>,
+    ) -> T;
+    fn visit_logical(
+        &mut self,
+        left: &'a Expr<'a>,
+        operator: &'a Token<'a>,
+        right: &'a Expr<'a>,
+    ) -> T;
+    fn visit_unary(&mut self, operator: &'a Token<'a>, right: &'a Expr<'a>) -> T;
 }
 
 impl Display for Expr<'_> {
@@ -49,16 +65,21 @@ impl Debug for Expr<'_> {
 }
 
 struct ExprPrinter<'a, 'b>(&'a mut std::fmt::Formatter<'b>);
-impl ExprVisitor<std::fmt::Result> for ExprPrinter<'_, '_> {
-    fn visit_literal(&mut self, value: &FilterValue) -> std::fmt::Result {
+impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
+    fn visit_literal(&mut self, value: &'e FilterValue) -> std::fmt::Result {
         write!(self.0, "{}", value)
     }
 
-    fn visit_property(&mut self, name: &str) -> std::fmt::Result {
+    fn visit_property(&mut self, name: &'e str) -> std::fmt::Result {
         write!(self.0, "(property {})", name)
     }
 
-    fn visit_binary(&mut self, left: &Expr, operator: &Token, right: &Expr) -> std::fmt::Result {
+    fn visit_binary(
+        &mut self,
+        left: &'e Expr<'e>,
+        operator: &'e Token<'e>,
+        right: &'e Expr<'e>,
+    ) -> std::fmt::Result {
         write!(self.0, "({operator} ")?;
         self.visit_expr(left)?;
         write!(self.0, " ")?;
@@ -66,7 +87,12 @@ impl ExprVisitor<std::fmt::Result> for ExprPrinter<'_, '_> {
         write!(self.0, ")")
     }
 
-    fn visit_logical(&mut self, left: &Expr, operator: &Token, right: &Expr) -> std::fmt::Result {
+    fn visit_logical(
+        &mut self,
+        left: &'e Expr<'e>,
+        operator: &'e Token<'e>,
+        right: &'e Expr<'e>,
+    ) -> std::fmt::Result {
         write!(self.0, "({operator} ")?;
         self.visit_expr(left)?;
         write!(self.0, " ")?;
@@ -74,7 +100,7 @@ impl ExprVisitor<std::fmt::Result> for ExprPrinter<'_, '_> {
         write!(self.0, ")")
     }
 
-    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> std::fmt::Result {
+    fn visit_unary(&mut self, operator: &'e Token<'e>, right: &'e Expr<'e>) -> std::fmt::Result {
         write!(self.0, "{}", operator.lexeme())?;
         self.visit_expr(right)
     }
