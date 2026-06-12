@@ -428,6 +428,125 @@ mod logic {
     }
 }
 
+mod functions {
+    use super::*;
+
+    #[test]
+    fn unknown_functions_fail_at_parse_time() {
+        let error = parse_error("nope()");
+        assert!(
+            error.contains("unknown function 'nope()'"),
+            "expected an unknown-function error, got: {error}"
+        );
+        assert!(
+            error.contains("now()"),
+            "expected the error to list the supported functions, got: {error}"
+        );
+    }
+
+    #[test]
+    fn unclosed_function_calls_are_rejected() {
+        assert!(parse_error("now(1").contains("didn't find the closing ')'"));
+        assert!(parse_error("now(").contains("end of your filter expression"));
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn now_requires_the_chrono_feature() {
+        assert!(parse_error("now()").contains("'chrono' feature"));
+    }
+}
+
+mod durations {
+    use super::*;
+
+    #[rstest]
+    #[case("5x")]
+    #[case("5mm")]
+    #[case("5min")]
+    #[case("1h30")]
+    fn malformed_durations_are_rejected(#[case] filter: &str) {
+        let error = parse_error(filter);
+        assert!(
+            error.contains("duration"),
+            "expected a duration error for '{filter}', got: {error}"
+        );
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn duration_literals_require_the_chrono_feature() {
+        assert!(parse_error("5m").contains("'chrono' feature"));
+        assert!(parse_error("uploaded.age > 1h30m").contains("'chrono' feature"));
+    }
+}
+
+#[cfg(feature = "chrono")]
+mod datetimes {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    struct Event {
+        timestamp: chrono::DateTime<Utc>,
+    }
+
+    impl Filterable for Event {
+        fn get(&self, key: &str) -> FilterValue {
+            match key {
+                "event.timestamp" => self.timestamp.into(),
+                _ => FilterValue::Null,
+            }
+        }
+    }
+
+    #[test]
+    fn events_can_be_filtered_by_relative_time() {
+        let filter = Filter::new("event.timestamp > now() - 5m").expect("parse filter");
+
+        let recent = Event {
+            timestamp: Utc::now(),
+        };
+        assert!(filter.matches(&recent).expect("run filter"));
+
+        let stale = Event {
+            timestamp: Utc::now() - Duration::minutes(10),
+        };
+        assert!(!filter.matches(&stale).expect("run filter"));
+    }
+
+    #[test]
+    fn now_is_evaluated_at_filtering_time() {
+        // A single parsed filter sees a fresh "now" on every matches() call,
+        // so an event which is too old right now can still match later.
+        let filter = Filter::new("now() - event.timestamp >= 1ms").expect("parse filter");
+
+        let event = Event {
+            timestamp: Utc::now(),
+        };
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(filter.matches(&event).expect("run filter"));
+    }
+
+    #[rstest]
+    #[case("now() + 1h > now()", true)]
+    #[case("now() - now() < 1s", true)]
+    #[case("now() - now() > 0s - 1s", true)] // approximately the zero duration
+    #[case("5m < 1h", true)]
+    #[case("60s == 1m", true)]
+    #[case("1h30m == 90m", true)]
+    #[case("500ms + 500ms == 1s", true)]
+    #[case("1w == 7d", true)]
+    #[case("now() == 5m", false)] // datetimes and durations never compare equal
+    fn datetime_and_duration_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn now_rejects_arguments_at_parse_time() {
+        assert!(parse_error("now(1)").contains("does not accept any arguments"));
+    }
+}
+
 mod failure_modes {
     use super::*;
 

@@ -18,6 +18,7 @@ pub enum Token<'a> {
     String(Loc, &'a str),
     RawString(Loc, &'a str),
     Number(Loc, &'a str),
+    Duration(Loc, &'a str),
 
     Equals(Loc),
     NotEquals(Loc),
@@ -62,6 +63,7 @@ impl Token<'_> {
             Token::String(.., s) => s,
             Token::RawString(.., s) => s,
             Token::Number(.., s) => s,
+            Token::Duration(.., s) => s,
 
             Token::Equals(..) => "==",
             Token::NotEquals(..) => "!=",
@@ -106,6 +108,7 @@ impl Token<'_> {
             Token::String(loc, ..) => *loc,
             Token::RawString(loc, ..) => *loc,
             Token::Number(loc, ..) => *loc,
+            Token::Duration(loc, ..) => *loc,
 
             Token::Equals(loc) => *loc,
             Token::NotEquals(loc) => *loc,
@@ -166,6 +169,7 @@ mod tests {
     #[case(Token::String(LOC, "hello"), "hello")]
     #[case(Token::RawString(LOC, "he\\llo"), "he\\llo")]
     #[case(Token::Number(LOC, "1.5"), "1.5")]
+    #[case(Token::Duration(LOC, "1h30m"), "1h30m")]
     #[case(Token::Equals(LOC), "==")]
     #[case(Token::NotEquals(LOC), "!=")]
     #[case(Token::Contains(LOC), "contains")]

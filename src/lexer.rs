@@ -106,6 +106,31 @@ impl<'a> Scanner<'a> {
         ))
     }
 
+    /// Returns the byte offset of the next character to be consumed, or the
+    /// length of the source if the scanner has reached the end of its input.
+    fn position(&mut self) -> usize {
+        self.chars
+            .peek()
+            .map(|(idx, _)| *idx)
+            .unwrap_or(self.source.len())
+    }
+
+    /// Consumes a run of digits, along with an optional `.digits` fraction.
+    fn advance_numeric(&mut self) {
+        self.advance_while_fn(|_, c| c.is_numeric());
+        if let Some((idx, c)) = self.chars.peek()
+            && *c == '.'
+            && self.source[idx + 1..]
+                .chars()
+                .next()
+                .map(|c2| c2.is_numeric())
+                .unwrap_or_default()
+        {
+            self.chars.next();
+            self.advance_while_fn(|_, c| c.is_numeric());
+        }
+    }
+
     fn read_number(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
         let mut end = start + self.advance_while_fn(|_, c| c.is_numeric());
         if let Some((loc, c)) = self.chars.peek()
@@ -120,9 +145,67 @@ impl<'a> Scanner<'a> {
             end += 1 + self.advance_while_fn(|_, c| c.is_numeric());
         }
 
+        // A number which is immediately followed by a letter is a duration
+        // literal such as `5m`, `500ms`, or `1h30m`.
+        if matches!(self.chars.peek(), Some((_, c)) if c.is_alphabetic()) {
+            return self.read_duration(start);
+        }
+
         Ok(Token::Number(
             Loc::new(self.line, 1 + start - self.line_start),
             &self.source[start..end + 1],
+        ))
+    }
+
+    /// Reads the remainder of a duration literal such as `5m`, `500ms`, or
+    /// `1h30m`. The leading numeric segment has already been consumed, and the
+    /// scanner is positioned at the first character of the first unit.
+    fn read_duration(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
+        let start_loc = Loc::new(self.line, 1 + start - self.line_start);
+
+        loop {
+            // Greedily consume the unit suffix so that `ms` is milliseconds
+            // rather than minutes followed by a stray `s` (and so that typos
+            // like `5mm` are rejected outright).
+            let unit_start = self.position();
+            self.advance_while_fn(|_, c| c.is_alphabetic());
+            let unit = &self.source[unit_start..self.position()];
+
+            if !matches!(unit, "ms" | "s" | "m" | "h" | "d" | "w") {
+                return Err(human_errors::user(
+                    format!(
+                        "The duration starting at {start_loc} used the unit '{unit}', which is not a recognized duration unit."
+                    ),
+                    &[
+                        "Use one of the supported duration units: 'ms' (milliseconds), 's' (seconds), 'm' (minutes), 'h' (hours), 'd' (days), or 'w' (weeks).",
+                        "Combine several units to express compound durations, for example '1h30m'.",
+                    ],
+                ));
+            }
+
+            // Durations may chain additional `<number><unit>` segments, as in
+            // `1h30m`; anything else ends the literal.
+            if !matches!(self.chars.peek(), Some((_, c)) if c.is_numeric()) {
+                break;
+            }
+
+            self.advance_numeric();
+
+            if !matches!(self.chars.peek(), Some((_, c)) if c.is_alphabetic()) {
+                return Err(human_errors::user(
+                    format!(
+                        "The duration starting at {start_loc} contained a number without a duration unit."
+                    ),
+                    &[
+                        "Make sure that every number in a duration is followed by a unit, for example '1h30m'.",
+                    ],
+                ));
+            }
+        }
+
+        Ok(Token::Duration(
+            start_loc,
+            &self.source[start..self.position()],
         ))
     }
 
@@ -468,6 +551,78 @@ mod tests {
             other => panic!("Expected a number token, got {:?}", other),
         }
         assert!(scanner.next().is_none());
+    }
+
+    #[rstest]
+    #[case("5s", "5s")]
+    #[case("5m", "5m")]
+    #[case("2h", "2h")]
+    #[case("7d", "7d")]
+    #[case("1w", "1w")]
+    #[case("500ms", "500ms")]
+    #[case("1h30m", "1h30m")]
+    #[case("1w2d3h4m5s6ms", "1w2d3h4m5s6ms")]
+    #[case("1.5h", "1.5h")]
+    #[case("1h30.5m", "1h30.5m")]
+    fn test_duration_formats(#[case] input: &str, #[case] lexeme: &str) {
+        let mut scanner = Scanner::new(input);
+        match scanner.next() {
+            Some(Ok(Token::Duration(_, l))) => assert_eq!(l, lexeme),
+            other => panic!("Expected a duration token, got {:?}", other),
+        }
+        assert!(scanner.next().is_none());
+    }
+
+    #[test]
+    fn test_durations_require_adjacent_units() {
+        // A number which is *not* immediately followed by a unit is a plain
+        // number followed by whatever comes next.
+        assert_sequence!("5 m", Token::Number(.., "5"), Token::Property(.., "m"));
+        assert_sequence!(
+            "5m == 300s",
+            Token::Duration(.., "5m"),
+            Token::Equals(..),
+            Token::Duration(.., "300s"),
+        );
+    }
+
+    #[rstest]
+    #[case(
+        "5x",
+        "The duration starting at line 1, column 1 used the unit 'x', which is not a recognized duration unit."
+    )]
+    #[case(
+        "5mm",
+        "The duration starting at line 1, column 1 used the unit 'mm', which is not a recognized duration unit."
+    )]
+    #[case(
+        "5min",
+        "The duration starting at line 1, column 1 used the unit 'min', which is not a recognized duration unit."
+    )]
+    #[case(
+        "1h30",
+        "The duration starting at line 1, column 1 contained a number without a duration unit."
+    )]
+    #[case(
+        "a == 1h30x",
+        "The duration starting at line 1, column 6 used the unit 'x', which is not a recognized duration unit."
+    )]
+    fn test_malformed_durations(#[case] input: &str, #[case] message: &str) {
+        let mut scanner = Scanner::new(input);
+        let error = loop {
+            match scanner.next() {
+                Some(Ok(..)) => continue,
+                Some(Err(e)) => break e,
+                None => panic!("Expected an error while scanning '{input}'"),
+            }
+        };
+
+        assert!(
+            error.to_string().contains(message),
+            "Expected error message to contain '{}', got '{}'",
+            message,
+            error
+        );
     }
 
     #[test]
