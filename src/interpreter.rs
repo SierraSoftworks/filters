@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::{
     FilterValue, Filterable,
     expr::{Expr, ExprVisitor},
@@ -14,34 +16,58 @@ impl<'a, T: Filterable> FilterContext<'a, T> {
     }
 }
 
-impl<T: Filterable> ExprVisitor<FilterValue> for FilterContext<'_, T> {
-    fn visit_literal(&mut self, value: &FilterValue) -> FilterValue {
-        value.clone()
+/// The interpreter produces `Cow<'e, FilterValue>` values which borrow from
+/// the filter's AST wherever possible. This means that evaluating a filter
+/// does not allocate for literal values (including string and tuple
+/// literals); the only owned values are those produced by
+/// [`Filterable::get`] when a property is resolved.
+impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<'_, T> {
+    fn visit_literal(&mut self, value: &'e FilterValue) -> Cow<'e, FilterValue> {
+        Cow::Borrowed(value)
     }
 
-    fn visit_property(&mut self, name: &str) -> FilterValue {
-        self.target.get(name).clone()
+    fn visit_property(&mut self, name: &'e str) -> Cow<'e, FilterValue> {
+        Cow::Owned(self.target.get(name))
     }
 
-    fn visit_binary(&mut self, left: &Expr, operator: &Token, right: &Expr) -> FilterValue {
+    fn visit_binary(
+        &mut self,
+        left: &'e Expr<'e>,
+        operator: &'e Token<'e>,
+        right: &'e Expr<'e>,
+    ) -> Cow<'e, FilterValue> {
         let left = self.visit_expr(left);
         let right = self.visit_expr(right);
-        match operator {
-            Token::Equals(..) => (left == right).into(),
-            Token::NotEquals(..) => (left != right).into(),
-            Token::Contains(..) => left.contains(&right).into(),
-            Token::In(..) => right.contains(&left).into(),
-            Token::StartsWith(..) => left.startswith(&right).into(),
-            Token::EndsWith(..) => left.endswith(&right).into(),
-            Token::GreaterThan(..) => (left > right).into(),
-            Token::SmallerThan(..) => (left < right).into(),
-            Token::GreaterEqual(..) => (left >= right).into(),
-            Token::SmallerEqual(..) => (left <= right).into(),
+
+        // NOTE: We compare through `as_ref()` to ensure that we invoke
+        // `FilterValue`'s own comparison methods (which have bespoke
+        // `lt`/`le`/`gt`/`ge` semantics) rather than `Cow`'s defaults,
+        // which would derive them from `partial_cmp` instead.
+        let left = left.as_ref();
+        let right = right.as_ref();
+        let result = match operator {
+            Token::Equals(..) => left == right,
+            Token::NotEquals(..) => left != right,
+            Token::Contains(..) => left.contains(right),
+            Token::In(..) => right.contains(left),
+            Token::StartsWith(..) => left.startswith(right),
+            Token::EndsWith(..) => left.endswith(right),
+            Token::GreaterThan(..) => left.gt(right),
+            Token::SmallerThan(..) => left.lt(right),
+            Token::GreaterEqual(..) => left.ge(right),
+            Token::SmallerEqual(..) => left.le(right),
             token => unreachable!("Encountered an unexpected binary operator '{token}'"),
-        }
+        };
+
+        Cow::Owned(FilterValue::Bool(result))
     }
 
-    fn visit_logical(&mut self, left: &Expr, operator: &Token, right: &Expr) -> FilterValue {
+    fn visit_logical(
+        &mut self,
+        left: &'e Expr<'e>,
+        operator: &'e Token<'e>,
+        right: &'e Expr<'e>,
+    ) -> Cow<'e, FilterValue> {
         let left = self.visit_expr(left);
 
         match operator {
@@ -53,17 +79,15 @@ impl<T: Filterable> ExprVisitor<FilterValue> for FilterContext<'_, T> {
         }
     }
 
-    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> FilterValue {
+    fn visit_unary(
+        &mut self,
+        operator: &'e Token<'e>,
+        right: &'e Expr<'e>,
+    ) -> Cow<'e, FilterValue> {
         let right = self.visit_expr(right);
 
         match operator {
-            Token::Not(..) => {
-                if right.is_truthy() {
-                    false.into()
-                } else {
-                    true.into()
-                }
-            }
+            Token::Not(..) => Cow::Owned(FilterValue::Bool(!right.is_truthy())),
             token => unreachable!("Encountered an unexpected unary operator '{token}'"),
         }
     }
