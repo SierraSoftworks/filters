@@ -193,6 +193,21 @@ impl<'a> Iterator for Scanner<'a> {
                         1 + idx - self.line_start,
                     ))));
                 }
+                // NOTE: '+' and '-' only act as operators when they *start* a new
+                // token; a '-' inside an identifier which is already being consumed
+                // remains part of that identifier (e.g. `asset.source-code`).
+                '+' => {
+                    return Some(Ok(Token::Plus(Loc::new(
+                        self.line,
+                        1 + idx - self.line_start,
+                    ))));
+                }
+                '-' => {
+                    return Some(Ok(Token::Minus(Loc::new(
+                        self.line,
+                        1 + idx - self.line_start,
+                    ))));
+                }
                 '&' => {
                     return if self.match_char('&') {
                         Some(Ok(Token::And(Loc::new(
@@ -492,6 +507,53 @@ mod tests {
             Token::Not(..),
             Token::Property(.., "artifact.source-code"),
         );
+    }
+
+    #[test]
+    fn test_arithmetic_operators() {
+        assert_sequence!(
+            "1 + 2 - 3",
+            Token::Number(.., "1"),
+            Token::Plus(..),
+            Token::Number(.., "2"),
+            Token::Minus(..),
+            Token::Number(.., "3"),
+        );
+
+        // No whitespace is required around the operators...
+        assert_sequence!(
+            "1+2-3",
+            Token::Number(.., "1"),
+            Token::Plus(..),
+            Token::Number(.., "2"),
+            Token::Minus(..),
+            Token::Number(.., "3"),
+        );
+
+        // ...and a leading '-' is an operator rather than part of a number.
+        assert_sequence!("-5", Token::Minus(..), Token::Number(.., "5"));
+    }
+
+    #[test]
+    fn test_hyphenated_identifiers_are_not_subtraction() {
+        // A '-' inside an identifier which is already being consumed remains
+        // part of that identifier...
+        assert_sequence!(
+            "asset.source-code",
+            Token::Property(.., "asset.source-code")
+        );
+
+        // ...while a '-' which starts a new token is the subtraction operator.
+        assert_sequence!(
+            "asset.size - 5",
+            Token::Property(.., "asset.size"),
+            Token::Minus(..),
+            Token::Number(.., "5"),
+        );
+
+        // A '-' immediately following a property starts a new token only when
+        // preceded by whitespace; without it, the identifier keeps growing.
+        assert_sequence!("asset.size-5", Token::Property(.., "asset.size-5"));
     }
 
     #[test]

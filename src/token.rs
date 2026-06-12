@@ -37,6 +37,9 @@ pub enum Token<'a> {
     GreaterEqual(Loc),
     SmallerEqual(Loc),
 
+    Plus(Loc),
+    Minus(Loc),
+
     Not(Loc),
     And(Loc),
     Or(Loc),
@@ -78,6 +81,9 @@ impl Token<'_> {
             Token::SmallerThan(..) => "<",
             Token::SmallerEqual(..) => "<=",
 
+            Token::Plus(..) => "+",
+            Token::Minus(..) => "-",
+
             Token::Not(..) => "!",
             Token::And(..) => "&&",
             Token::Or(..) => "||",
@@ -118,6 +124,9 @@ impl Token<'_> {
             Token::SmallerThan(loc) => *loc,
             Token::GreaterEqual(loc) => *loc,
             Token::SmallerEqual(loc) => *loc,
+
+            Token::Plus(loc) => *loc,
+            Token::Minus(loc) => *loc,
 
             Token::Not(loc) => *loc,
             Token::And(loc) => *loc,
@@ -174,6 +183,8 @@ mod tests {
     #[case(Token::GreaterEqual(LOC), ">=")]
     #[case(Token::SmallerThan(LOC), "<")]
     #[case(Token::SmallerEqual(LOC), "<=")]
+    #[case(Token::Plus(LOC), "+")]
+    #[case(Token::Minus(LOC), "-")]
     #[case(Token::Not(LOC), "!")]
     #[case(Token::And(LOC), "&&")]
     #[case(Token::Or(LOC), "||")]

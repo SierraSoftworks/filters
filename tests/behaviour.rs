@@ -134,9 +134,51 @@ mod literals_and_truthiness {
 
     #[test]
     fn negative_numbers_are_not_literals() {
-        // There is no unary minus: "-5" lexes as a property reference, which
-        // resolves to null for objects which don't define it.
-        assert!(matches("-5 == null"));
+        // There is no unary minus: a leading '-' is the subtraction operator,
+        // so "-5" on its own is a parse error rather than a negative literal.
+        // (Earlier versions lexed "-5" as a property named "-5"; that quirk
+        // was retired when arithmetic was introduced.)
+        assert!(parse_error("-5 == null").contains("unexpected '-'"));
+
+        // Negative values can be produced via subtraction instead.
+        assert!(matches("0 - 5 < 0"));
+        assert!(matches("0 - 5 == 0 - 5"));
+    }
+}
+
+mod arithmetic {
+    use super::*;
+
+    #[rstest]
+    #[case("1 + 2 == 3", true)]
+    #[case("doc.pages - 2 == 550", true)]
+    #[case("doc.pages + 100 > 600", true)] // arithmetic binds tighter than comparisons
+    #[case("1 + 2 + 3 - 4 == 2", true)] // chains are evaluated left-to-right
+    #[case("doc.pages + null == null", true)] // mismatched operand types yield null
+    #[case("\"a\" + \"b\" == null", true)] // there is no string concatenation
+    fn arithmetic_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn hyphenated_property_names_are_not_subtraction() {
+        // A '-' inside an identifier remains part of the property name, so
+        // this resolves the (undefined) property "doc.pages-2" rather than
+        // subtracting 2 from doc.pages...
+        assert!(matches("doc.pages-2 == null"));
+
+        // ...while surrounding the '-' with whitespace makes it an operator.
+        assert!(matches("doc.pages - 2 == 550"));
+
+        // Properties like asset.source-code keep working as a single name.
+        assert!(matches("asset.source-code == null"));
+    }
+
+    #[test]
+    fn there_is_no_unary_minus_or_plus() {
+        assert!(parse_error("-5").contains("unexpected '-'"));
+        assert!(parse_error("+5").contains("unexpected '+'"));
+        assert!(parse_error("doc.pages > -5").contains("unexpected '-'"));
     }
 }
 

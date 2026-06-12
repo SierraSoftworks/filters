@@ -68,25 +68,25 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         // which would derive them from `partial_cmp` instead.
         let left = left.as_ref();
         let right = right.as_ref();
-        let result = match operator {
-            Token::Equals(..) => left == right,
-            Token::NotEquals(..) => left != right,
-            Token::Contains(..) => left.contains(right),
-            Token::ContainsCs(..) => left.contains_cs(right),
-            Token::In(..) => right.contains(left),
-            Token::InCs(..) => right.contains_cs(left),
-            Token::StartsWith(..) => left.startswith(right),
-            Token::StartsWithCs(..) => left.startswith_cs(right),
-            Token::EndsWith(..) => left.endswith(right),
-            Token::EndsWithCs(..) => left.endswith_cs(right),
-            Token::GreaterThan(..) => left.gt(right),
-            Token::SmallerThan(..) => left.lt(right),
-            Token::GreaterEqual(..) => left.ge(right),
-            Token::SmallerEqual(..) => left.le(right),
+        match operator {
+            Token::Equals(..) => wrap_bool(left == right),
+            Token::NotEquals(..) => wrap_bool(left != right),
+            Token::Contains(..) => wrap_bool(left.contains(right)),
+            Token::ContainsCs(..) => wrap_bool(left.contains_cs(right)),
+            Token::In(..) => wrap_bool(right.contains(left)),
+            Token::InCs(..) => wrap_bool(right.contains_cs(left)),
+            Token::StartsWith(..) => wrap_bool(left.startswith(right)),
+            Token::StartsWithCs(..) => wrap_bool(left.startswith_cs(right)),
+            Token::EndsWith(..) => wrap_bool(left.endswith(right)),
+            Token::EndsWithCs(..) => wrap_bool(left.endswith_cs(right)),
+            Token::GreaterThan(..) => wrap_bool(left.gt(right)),
+            Token::SmallerThan(..) => wrap_bool(left.lt(right)),
+            Token::GreaterEqual(..) => wrap_bool(left.ge(right)),
+            Token::SmallerEqual(..) => wrap_bool(left.le(right)),
+            Token::Plus(..) => add(left.to_owned(), right.to_owned()),
+            Token::Minus(..) => subtract(left.to_owned(), right.to_owned()),
             token => unreachable!("Encountered an unexpected binary operator '{token}'"),
-        };
-
-        Cow::Owned(FilterValue::Bool(result))
+        }
     }
 
     fn visit_logical(
@@ -137,6 +137,29 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
             regex.is_match(s)
         })))
     }
+}
+
+/// Evaluates the `+` operator, returning [`FilterValue::Null`] for operand
+/// combinations which cannot be meaningfully added together.
+fn add<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+    match (left, right) {
+        (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a + b)),
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
+/// Evaluates the `-` operator, returning [`FilterValue::Null`] for operand
+/// combinations which cannot be meaningfully subtracted from one another.
+fn subtract<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+    match (left, right) {
+        (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a - b)),
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
+#[inline]
+fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue> {
+    Cow::Owned(FilterValue::Bool(value))
 }
 
 #[cfg(test)]
@@ -231,6 +254,23 @@ mod tests {
     #[case("1 <= 1", true)]
     #[case("2 <= 1", false)]
     fn smaller(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    #[case("1 + 2 == 3", true)]
+    #[case("1 + 2 + 3 == 6", true)] // chaining is left-associative
+    #[case("5 - 2 == 3", true)]
+    #[case("5 - 2 - 1 == 2", true)]
+    #[case("5 - 2 + 1 == 4", true)]
+    #[case("0 - 5 < 0", true)] // negative values via subtraction
+    #[case("number + 1 == 2", true)]
+    #[case("number + 1 > 1", true)] // arithmetic binds tighter than comparisons
+    #[case("1 + null == null", true)] // mismatched operands evaluate to null
+    #[case("\"a\" + \"b\" == null", true)] // there is no string concatenation
+    #[case("true + true == null", true)]
+    #[case("tuple + tuple == null", true)]
+    fn arithmetic(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
     }
 

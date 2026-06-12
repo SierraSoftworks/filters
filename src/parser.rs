@@ -76,7 +76,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
     }
 
     fn comparison(&mut self) -> Result<Expr<'a>, Error> {
-        let mut expr = self.unary()?;
+        let mut expr = self.term()?;
 
         if matches!(
             self.tokens.peek(),
@@ -144,6 +144,21 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 )?;
                 expr = Expr::Matches(Box::new(expr), regex);
             }
+        }
+
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr<'a>, Error> {
+        let mut expr = self.unary()?;
+
+        while matches!(
+            self.tokens.peek(),
+            Some(Ok(Token::Plus(..)) | Ok(Token::Minus(..)))
+        ) {
+            let token = self.tokens.next().unwrap()?;
+            let right = self.unary()?;
+            expr = Expr::Binary(Box::new(expr), token, Box::new(right));
         }
 
         Ok(expr)
