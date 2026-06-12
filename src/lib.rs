@@ -94,6 +94,21 @@
 //! | `!`                      | Logical NOT (unary).                                               |
 //! | `(...)`                  | Grouping.                                                          |
 //!
+//! ## Case sensitivity
+//!
+//! The string operators above compare case-insensitively, folding both
+//! operands with the language's Unicode case-folding rules. Each of them
+//! (except `matches`, where the pattern author controls casing with `(?i)`)
+//! has a case-*sensitive* variant with a `_cs` suffix which compares strings
+//! exactly as written: `contains_cs`, `in_cs`, `startswith_cs`,
+//! `endswith_cs`, and `like_cs`. They sit at the same precedence as their
+//! case-insensitive counterparts, and tuple membership through `contains_cs`
+//! and `in_cs` compares the tuple's elements case-sensitively too.
+//!
+//! ```text
+//! branch.name startswith_cs "Feat/" && "Alice" in_cs branch.reviewers
+//! ```
+//!
 //! ## Pattern matching
 //!
 //! The `like` operator matches a string against a glob pattern. `*` matches
@@ -103,7 +118,8 @@
 //! the rest of the language, matching is case-insensitive: both the pattern
 //! and the input are folded using the language's Unicode case-folding rules,
 //! including multi-character folds (`"groß" like "*ss"` holds, and `?`
-//! counts folded characters, so `ß` counts as two).
+//! counts folded characters, so `ß` counts as two). The `like_cs` variant
+//! matches case-sensitively instead, with no folding at all.
 //!
 //! ```
 //! use filters::{Filter, FilterValue, Filterable};

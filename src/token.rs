@@ -22,10 +22,15 @@ pub enum Token<'a> {
     Equals(Loc),
     NotEquals(Loc),
     Contains(Loc),
+    ContainsCs(Loc),
     In(Loc),
+    InCs(Loc),
     StartsWith(Loc),
+    StartsWithCs(Loc),
     EndsWith(Loc),
+    EndsWithCs(Loc),
     Like(Loc),
+    LikeCs(Loc),
     Matches(Loc),
     GreaterThan(Loc),
     SmallerThan(Loc),
@@ -58,10 +63,15 @@ impl Token<'_> {
             Token::Equals(..) => "==",
             Token::NotEquals(..) => "!=",
             Token::Contains(..) => "contains",
+            Token::ContainsCs(..) => "contains_cs",
             Token::In(..) => "in",
+            Token::InCs(..) => "in_cs",
             Token::StartsWith(..) => "startswith",
+            Token::StartsWithCs(..) => "startswith_cs",
             Token::EndsWith(..) => "endswith",
+            Token::EndsWithCs(..) => "endswith_cs",
             Token::Like(..) => "like",
+            Token::LikeCs(..) => "like_cs",
             Token::Matches(..) => "matches",
             Token::GreaterThan(..) => ">",
             Token::GreaterEqual(..) => ">=",
@@ -94,10 +104,15 @@ impl Token<'_> {
             Token::Equals(loc) => *loc,
             Token::NotEquals(loc) => *loc,
             Token::Contains(loc) => *loc,
+            Token::ContainsCs(loc) => *loc,
             Token::In(loc) => *loc,
+            Token::InCs(loc) => *loc,
             Token::StartsWith(loc) => *loc,
+            Token::StartsWithCs(loc) => *loc,
             Token::EndsWith(loc) => *loc,
+            Token::EndsWithCs(loc) => *loc,
             Token::Like(loc) => *loc,
+            Token::LikeCs(loc) => *loc,
             Token::Matches(loc) => *loc,
             Token::GreaterThan(loc) => *loc,
             Token::SmallerThan(loc) => *loc,
@@ -145,10 +160,15 @@ mod tests {
     #[case(Token::Equals(LOC), "==")]
     #[case(Token::NotEquals(LOC), "!=")]
     #[case(Token::Contains(LOC), "contains")]
+    #[case(Token::ContainsCs(LOC), "contains_cs")]
     #[case(Token::In(LOC), "in")]
+    #[case(Token::InCs(LOC), "in_cs")]
     #[case(Token::StartsWith(LOC), "startswith")]
+    #[case(Token::StartsWithCs(LOC), "startswith_cs")]
     #[case(Token::EndsWith(LOC), "endswith")]
+    #[case(Token::EndsWithCs(LOC), "endswith_cs")]
     #[case(Token::Like(LOC), "like")]
+    #[case(Token::LikeCs(LOC), "like_cs")]
     #[case(Token::Matches(LOC), "matches")]
     #[case(Token::GreaterThan(LOC), ">")]
     #[case(Token::GreaterEqual(LOC), ">=")]

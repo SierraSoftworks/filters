@@ -110,7 +110,8 @@ Any other identifier — including `.` and `-` separated names like
 `release.prerelease` or `asset.source-code` — is treated as a property
 reference and resolved by calling `Filterable::get` on the target object.
 Operator keywords (`in`, `contains`, `startswith`, `endswith`, `like`,
-`matches`) are reserved and cannot be used as property names.
+`matches`, and their `_cs` variants) are reserved and cannot be used as
+property names.
 
 ### Operators
 
@@ -129,6 +130,20 @@ In order of increasing precedence:
 | `matches`                | Regular expression match (requires the `regex` feature). |
 | `!`                      | Logical NOT (unary).                                    |
 | `(...)`                  | Grouping.                                               |
+
+### Case sensitivity
+
+The string operators compare case-insensitively by default, folding both
+operands with the language's Unicode case-folding rules. Each of them (except
+`matches`, where the pattern author controls casing with `(?i)`) has a
+case-sensitive variant with a `_cs` suffix which compares strings exactly as
+written: `contains_cs`, `in_cs`, `startswith_cs`, `endswith_cs`, and
+`like_cs`. Tuple membership through `contains_cs` and `in_cs` compares the
+tuple's elements case-sensitively too.
+
+```text
+branch.name startswith_cs "Feat/" && "Alice" in_cs branch.reviewers
+```
 
 ### Pattern matching
 

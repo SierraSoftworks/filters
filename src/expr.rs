@@ -120,7 +120,12 @@ impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
     }
 
     fn visit_like(&mut self, left: &'e Expr<'e>, glob: &'e Glob) -> std::fmt::Result {
-        write!(self.0, "(like ")?;
+        let operator = if glob.is_case_sensitive() {
+            "like_cs"
+        } else {
+            "like"
+        };
+        write!(self.0, "({operator} ")?;
         self.visit_expr(left)?;
         write!(self.0, " {})", glob)
     }
@@ -167,6 +172,10 @@ mod tests {
     #[case(
         Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile("feat/*"),),
         "(like (property branch.name) \"feat/*\")"
+    )]
+    #[case(
+        Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile_cs("feat/*"),),
+        "(like_cs (property branch.name) \"feat/*\")"
     )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {
         assert_eq!(view, format!("{expr}"));

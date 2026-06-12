@@ -168,6 +168,83 @@ mod like {
     }
 }
 
+mod like_cs {
+    use super::*;
+
+    #[rstest]
+    // Wildcards are unchanged, but literal characters must match exactly.
+    #[case(r#"branch.name like_cs "feat/*""#, "feat/login", true)]
+    #[case(r#"branch.name like_cs "feat/*""#, "FEAT/LOGIN", false)]
+    #[case(r#"branch.name like_cs "Feat/*""#, "Feat/login", true)]
+    #[case(r#"branch.name like_cs "main""#, "main", true)]
+    #[case(r#"branch.name like_cs "main""#, "Main", false)]
+    #[case(r#"branch.name like_cs "v?.?""#, "v1.2", true)]
+    // No case folding: ß is a single character and never matches "ss".
+    #[case(r#"branch.name like_cs "gro?""#, "groß", true)]
+    #[case(r#"branch.name like_cs "gro*ss""#, "groß", false)]
+    fn glob_semantics(#[case] filter: &str, #[case] name: &'static str, #[case] expected: bool) {
+        assert_eq!(matches_branch(filter, &Branch::named(name)), expected);
+    }
+
+    #[rstest]
+    #[case(r#"branch.reviewers like_cs "Ali*""#, true)]
+    #[case(r#"branch.reviewers like_cs "ali*""#, false)]
+    #[case(r#"branch.protected like_cs "*""#, false)]
+    fn non_string_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches_branch(filter, &Branch::default()), expected);
+    }
+
+    #[test]
+    fn debug_output_shows_the_compiled_expression() {
+        let filter = Filter::new(r#"branch.name like_cs "Feat/*""#).expect("parse the filter");
+        assert_eq!(
+            format!("{filter:?}"),
+            r#"(like_cs (property branch.name) "Feat/*")"#
+        );
+    }
+
+    #[test]
+    fn non_literal_patterns_fail_to_parse() {
+        let error = Filter::new(r#"branch.name like_cs branch.other"#)
+            .expect_err("the filter should fail to parse");
+        assert!(
+            error
+                .to_string()
+                .contains("must be followed by its pattern as a string literal"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+mod case_sensitive_operators {
+    use super::*;
+
+    #[rstest]
+    #[case(r#"branch.name contains_cs "feat""#, true)]
+    #[case(r#"branch.name contains_cs "FEAT""#, false)]
+    #[case(r#"branch.name contains "FEAT""#, true)]
+    #[case(r#""feat" in_cs branch.name"#, true)]
+    #[case(r#""FEAT" in_cs branch.name"#, false)]
+    #[case(r#"branch.name startswith_cs "feat/""#, true)]
+    #[case(r#"branch.name startswith_cs "Feat/""#, false)]
+    #[case(r#"branch.name endswith_cs "login""#, true)]
+    #[case(r#"branch.name endswith_cs "LOGIN""#, false)]
+    // Multi-character folds don't apply to the case-sensitive operators.
+    #[case(r#""straße" contains_cs "ss""#, false)]
+    #[case(r#""straße" contains "ss""#, true)]
+    // Tuple membership compares elements case-sensitively too.
+    #[case(r#"branch.reviewers contains_cs "Alice""#, true)]
+    #[case(r#"branch.reviewers contains_cs "alice""#, false)]
+    #[case(r#""Bob" in_cs branch.reviewers"#, true)]
+    #[case(r#""bob" in_cs branch.reviewers"#, false)]
+    // Cross-type comparisons remain lenient.
+    #[case(r#"branch.missing contains_cs "x""#, false)]
+    #[case(r#"branch.protected startswith_cs "f""#, false)]
+    fn semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches_branch(filter, &Branch::default()), expected);
+    }
+}
+
 #[cfg(feature = "regex")]
 mod matches {
     use super::*;

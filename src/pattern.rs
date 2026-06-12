@@ -34,30 +34,57 @@ enum GlobToken {
 ///
 /// Character classes (`[a-z]`) and alternation (`{a,b}`) are *not* supported.
 ///
-/// Matching is case-insensitive, using the same character folding rules as
-/// the rest of the filter language (see [`crate::case_sensitivity`]): both
-/// the pattern (at compile time) and the input (at match time) are folded
-/// character-by-character via Unicode lowercasing, with all Greek sigma forms
-/// (`Σ`, `σ`, `ς`) treated as equivalent, and the pattern is matched against
-/// the folded input stream. Characters whose lowercase form expands to
-/// several characters participate fully (e.g. `ß` folds to `ss`, so
-/// `"groß"` matches `gro*ss` and `"GRÜSSE"` matches `grüße*`).
+/// Matching is case-insensitive by default ([`Glob::compile`]), using the
+/// same character folding rules as the rest of the filter language (see
+/// [`crate::case_sensitivity`]): both the pattern (at compile time) and the
+/// input (at match time) are folded character-by-character via Unicode
+/// lowercasing, with all Greek sigma forms (`Σ`, `σ`, `ς`) treated as
+/// equivalent, and the pattern is matched against the folded input stream.
+/// Characters whose lowercase form expands to several characters participate
+/// fully (e.g. `ß` folds to `ss`, so `"groß"` matches `gro*ss` and
+/// `"GRÜSSE"` matches `grüße*`).
 ///
 /// Because matching operates on the *folded* stream, `?` consumes exactly
 /// one folded character: an input `ß` counts as the two characters `ss`,
 /// and is matched by `??` rather than `?`.
+///
+/// Case-*sensitive* globs ([`Glob::compile_cs`], powering the `like_cs`
+/// operator) skip folding entirely: literals match exact characters, and `?`
+/// consumes exactly one character of the raw input.
 #[derive(PartialEq)]
 pub struct Glob {
     pattern: String,
     tokens: Vec<GlobToken>,
+    case_sensitive: bool,
 }
 
 impl Glob {
-    /// Compiles the provided pattern. Compilation cannot fail: every string is
-    /// a valid glob pattern.
+    /// Compiles the provided pattern for case-insensitive matching.
+    /// Compilation cannot fail: every string is a valid glob pattern.
     pub fn compile(pattern: &str) -> Self {
+        Self::compile_with(pattern, false)
+    }
+
+    /// Compiles the provided pattern for case-sensitive matching, in which
+    /// literal characters match exactly and no case folding takes place.
+    pub fn compile_cs(pattern: &str) -> Self {
+        Self::compile_with(pattern, true)
+    }
+
+    fn compile_with(pattern: &str, case_sensitive: bool) -> Self {
         let mut tokens = Vec::new();
         let mut chars = pattern.chars();
+        let literal = |tokens: &mut Vec<GlobToken>, c: char| {
+            if case_sensitive {
+                tokens.push(GlobToken::Literal(c));
+            } else {
+                // Literal characters are case-folded at compile time so that
+                // matching can compare them directly against the folded input
+                // stream (multi-character expansions become several tokens).
+                tokens.extend(casefold_char(c).map(GlobToken::Literal));
+            }
+        };
+
         while let Some(c) = chars.next() {
             match c {
                 // Consecutive `*`s are equivalent to a single `*`; collapsing
@@ -68,18 +95,15 @@ impl Glob {
                     }
                 }
                 '?' => tokens.push(GlobToken::AnyChar),
-                // Literal characters are case-folded at compile time so that
-                // matching can compare them directly against the folded input
-                // stream (multi-character expansions become several tokens).
-                '\\' => tokens
-                    .extend(casefold_char(chars.next().unwrap_or('\\')).map(GlobToken::Literal)),
-                c => tokens.extend(casefold_char(c).map(GlobToken::Literal)),
+                '\\' => literal(&mut tokens, chars.next().unwrap_or('\\')),
+                c => literal(&mut tokens, c),
             }
         }
 
         Self {
             pattern: pattern.to_string(),
             tokens,
+            case_sensitive,
         }
     }
 
@@ -88,16 +112,33 @@ impl Glob {
         &self.pattern
     }
 
-    /// Tests whether the entire (case-folded) input matches this pattern.
+    /// Whether this glob matches case-sensitively (see [`Glob::compile_cs`]).
+    pub fn is_case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
+
+    /// Tests whether the entire input matches this pattern (after case
+    /// folding, unless this glob was compiled with [`Glob::compile_cs`]).
+    pub fn is_match(&self, input: &str) -> bool {
+        if self.case_sensitive {
+            self.matches_stream(input.chars().peekable())
+        } else {
+            self.matches_stream(casefold(input).peekable())
+        }
+    }
+
+    /// Tests whether the entire character stream matches this pattern.
     ///
     /// This uses an iterative two-pointer algorithm with single-star
-    /// backtracking over the folded character stream, performing no heap
-    /// allocation regardless of the input or pattern: the stream positions
-    /// used for backtracking are cheap clones of the folding iterator.
-    pub fn is_match(&self, input: &str) -> bool {
+    /// backtracking over the character stream, performing no heap allocation
+    /// regardless of the input or pattern: the stream positions used for
+    /// backtracking are cheap clones of the iterator.
+    fn matches_stream<I: Iterator<Item = char> + Clone>(
+        &self,
+        mut chars: std::iter::Peekable<I>,
+    ) -> bool {
         let tokens = &self.tokens;
         let mut t = 0; // Index of the pattern token being matched.
-        let mut chars = casefold(input).peekable();
 
         // The token index following the most recent `*`, along with the
         // stream position at which that `*` should resume consuming input if
@@ -303,10 +344,47 @@ mod tests {
         );
     }
 
+    #[rstest]
+    // Wildcards behave exactly as they do in case-insensitive globs.
+    #[case("feat/*", "feat/login", true)]
+    #[case("feat/*", "fix/login", false)]
+    #[case("v?.?", "v1.2", true)]
+    // ...but literal characters must match exactly.
+    #[case("Main", "Main", true)]
+    #[case("Main", "main", false)]
+    #[case("FEAT/*", "feat/login", false)]
+    #[case("*Fix", "hotFix", true)]
+    #[case("*Fix", "hotfix", false)]
+    // No case folding takes place: ß stays a single character.
+    #[case("gro?", "groß", true)]
+    #[case("groß", "groß", true)]
+    #[case("gross", "groß", false)]
+    #[case("stra*e", "STRASSE", false)]
+    // Escapes still make wildcards literal.
+    #[case("a\\*b", "a*b", true)]
+    #[case("a\\*b", "axb", false)]
+    fn case_sensitive_glob_matching(
+        #[case] pattern: &str,
+        #[case] input: &str,
+        #[case] expected: bool,
+    ) {
+        let glob = Glob::compile_cs(pattern);
+        assert_eq!(
+            glob.is_match(input),
+            expected,
+            "expected '{pattern}' matching '{input}' case-sensitively to be {expected}"
+        );
+    }
+
     #[test]
     fn glob_exposes_its_pattern() {
         let glob = Glob::compile("feat/*");
         assert_eq!(glob.pattern(), "feat/*");
+        assert!(!glob.is_case_sensitive());
+
+        let glob = Glob::compile_cs("feat/*");
+        assert_eq!(glob.pattern(), "feat/*");
+        assert!(glob.is_case_sensitive());
     }
 
     #[test]
@@ -317,9 +395,10 @@ mod tests {
     }
 
     #[test]
-    fn glob_equality_is_based_on_the_pattern() {
+    fn glob_equality_is_based_on_the_pattern_and_sensitivity() {
         assert_eq!(Glob::compile("a*"), Glob::compile("a*"));
         assert_ne!(Glob::compile("a*"), Glob::compile("b*"));
+        assert_ne!(Glob::compile("a*"), Glob::compile_cs("a*"));
     }
 
     #[cfg(feature = "regex")]

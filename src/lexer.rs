@@ -137,10 +137,15 @@ impl<'a> Scanner<'a> {
             "null" => Ok(Token::Null(location)),
             "true" => Ok(Token::True(location)),
             "contains" => Ok(Token::Contains(location)),
+            "contains_cs" => Ok(Token::ContainsCs(location)),
             "in" => Ok(Token::In(location)),
+            "in_cs" => Ok(Token::InCs(location)),
             "startswith" => Ok(Token::StartsWith(location)),
+            "startswith_cs" => Ok(Token::StartsWithCs(location)),
             "endswith" => Ok(Token::EndsWith(location)),
+            "endswith_cs" => Ok(Token::EndsWithCs(location)),
             "like" => Ok(Token::Like(location)),
+            "like_cs" => Ok(Token::LikeCs(location)),
             "matches" => Ok(Token::Matches(location)),
             lexeme => Ok(Token::Property(location, lexeme)),
         }
@@ -365,6 +370,30 @@ mod tests {
             Token::GreaterEqual(..),
             Token::SmallerThan(..),
             Token::SmallerEqual(..),
+        );
+    }
+
+    #[test]
+    fn test_case_sensitive_comparison_operators() {
+        assert_sequence!(
+            "contains_cs in_cs startswith_cs endswith_cs like_cs",
+            Token::ContainsCs(..),
+            Token::InCs(..),
+            Token::StartsWithCs(..),
+            Token::EndsWithCs(..),
+            Token::LikeCs(..),
+        );
+    }
+
+    #[test]
+    fn test_cs_suffixed_identifiers_are_properties() {
+        // Only the exact `_cs` keywords are reserved; anything longer is
+        // still an ordinary property reference.
+        assert_sequence!(
+            "contains_csx in_cs2 like_cs.name",
+            Token::Property(.., "contains_csx"),
+            Token::Property(.., "in_cs2"),
+            Token::Property(.., "like_cs.name"),
         );
     }
 
