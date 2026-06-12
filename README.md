@@ -101,7 +101,7 @@ matching whenever the expression evaluates to a truthy value (`null`, `false`,
 | Boolean    | `true`, `false` |                                                  |
 | Number     | `123`, `123.45` | All numbers are 64-bit floats internally.        |
 | String     | `"hello"`       | Escape embedded quotes with `\"`.                |
-| Raw string | `r"^v\d+$"`     | No escape processing; cannot contain `"` (the `r#"..."#` form is not supported). |
+| Raw string | `r"^v\d+$"`     | No escape processing; cannot contain `"`.        |
 | Tuple      | `["a", "b"]`    | A list of literal values.                        |
 
 ### Properties
