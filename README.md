@@ -45,6 +45,8 @@ it powers their backup policy filtering.
 - **Lightweight** — a single small dependency, no async, no unsafe API surface.
 - **Optional serde support** — deserialize filters directly out of your
   configuration files with the `serde` feature.
+- **Optional secret values** — compare passwords and tokens in filters without
+  ever being able to print them, with the `secrecy` feature.
 
 ## Usage
 
@@ -223,6 +225,46 @@ Missing or `null` filter fields deserialize to the match-everything filter
 Filters are parsed once and may then be evaluated against any number of
 objects. Evaluation is allocation-free except for the owned `FilterValue`s
 your `Filterable::get` implementation returns.
+
+## Secret values
+
+Enable the `secrecy` feature to expose sensitive properties (passwords, API
+tokens, and the like) as [secrecy](https://crates.io/crates/secrecy)-backed
+secrets. Secret values behave exactly like strings in every filter operation,
+but are always redacted when formatted — so they can never leak into your logs:
+
+```shell
+cargo add filters --features secrecy
+```
+
+```rust,ignore
+use filters::{Filter, FilterValue, Filterable};
+
+struct User {
+    password: secrecy::SecretString,
+}
+
+impl Filterable for User {
+    fn get(&self, key: &str) -> FilterValue {
+        match key {
+            "user.password" => self.password.clone().into(),
+            _ => FilterValue::Null,
+        }
+    }
+}
+
+let user = User { password: "hunter2".into() };
+
+// Secrets compare exactly like strings within filter expressions...
+let filter = Filter::new(r#"user.password == "Hunter2""#)?;
+assert!(filter.matches(&user)?);
+
+// ...but they are always redacted when formatted.
+println!("{}", user.get("user.password")); // prints: [REDACTED]
+```
+
+Note that, as with all of the filter language's comparisons, secret comparisons
+are not constant-time — don't rely on them to defend against timing attacks.
 
 ## Error messages
 
