@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use human_errors::{Error, ResultExt};
 
-use super::{FilterValue, expr::Expr, pattern::Glob, token::Token};
+use super::{FilterValue, expr::Expr, location::Loc, pattern::Glob, token::Token};
 
 pub struct Parser<'a, I: Iterator<Item = Result<Token<'a>, Error>>> {
     tokens: Peekable<I>,
@@ -237,8 +237,13 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 }
             }
             Some(Ok(Token::Property(..))) => {
-                if let Some(Ok(Token::Property(.., p))) = self.tokens.next() {
-                    Ok(Expr::Property(p))
+                if let Some(Ok(Token::Property(loc, p))) = self.tokens.next() {
+                    if matches!(self.tokens.peek(), Some(Ok(Token::LeftParen(..)))) {
+                        self.tokens.next();
+                        self.function_call(loc, p)
+                    } else {
+                        Ok(Expr::Property(p))
+                    }
                 } else {
                     unreachable!()
                 }
@@ -249,6 +254,61 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 "We reached the end of your filter expression while waiting for a [true, false, \"string\", number, (group), or property.name].",
                 &[
                     "Make sure that you have written a valid filter query and that you haven't forgotten part of it.",
+                ],
+            )),
+        }
+    }
+
+    fn function_call(&mut self, loc: Loc, name: &'a str) -> Result<Expr<'a>, Error> {
+        let mut args = Vec::new();
+        if !matches!(self.tokens.peek(), Some(Ok(Token::RightParen(..)))) {
+            loop {
+                args.push(self.or()?);
+                if matches!(self.tokens.peek(), Some(Ok(Token::Comma(..)))) {
+                    self.tokens.next();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        match self.tokens.next() {
+            Some(Ok(Token::RightParen(..))) => {}
+            Some(Err(err)) => return Err(err),
+            _ => {
+                return Err(human_errors::user(
+                    format!(
+                        "When attempting to parse the arguments to the '{name}()' function call at {loc}, we didn't find the closing ')' where we expected to."
+                    ),
+                    &["Make sure that you have closed your function call's parentheses correctly."],
+                ));
+            }
+        }
+
+        Self::check_function(name, loc, args.len())?;
+        Ok(Expr::FunctionCall(name, args))
+    }
+
+    /// Validates a function call at parse time, ensuring that the function is
+    /// known (and usable with the current crate features) and that it has been
+    /// called with the correct number of arguments.
+    fn check_function(name: &str, loc: Loc, arity: usize) -> Result<(), Error> {
+        match name {
+            "now" => {
+                let _ = arity;
+                Err(human_errors::user(
+                    format!(
+                        "Your filter called the 'now()' function at {loc}, but datetime support is not enabled in this build."
+                    ),
+                    &[
+                        "Enable the 'chrono' feature of the filters crate to use datetime functions like 'now()'.",
+                    ],
+                ))
+            }
+            _ => Err(human_errors::user(
+                format!("Your filter called an unknown function '{name}()' at {loc}."),
+                &[
+                    "Make sure that you are calling one of the functions supported by the filter language: now().",
                 ],
             )),
         }
@@ -556,6 +616,18 @@ mod tests {
         "a == &",
         "Filter included an orphaned '&' at line 1, column 6 which is not a valid operator."
     )]
+    #[case(
+        "nope()",
+        "Your filter called an unknown function 'nope()' at line 1, column 1."
+    )]
+    #[case(
+        "nope(1, true)",
+        "Your filter called an unknown function 'nope()' at line 1, column 1."
+    )]
+    #[case(
+        "now(1",
+        "When attempting to parse the arguments to the 'now()' function call at line 1, column 1, we didn't find the closing ')' where we expected to."
+    )]
     fn invalid_filters(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -567,5 +639,25 @@ mod tests {
                 e
             ),
         }
+    }
+
+    #[test]
+    fn unknown_function_errors_list_the_supported_functions() {
+        let tokens = crate::lexer::Scanner::new("nope()");
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains("now()"),
+            "Expected the error to list the supported functions, got '{error}'"
+        );
+    }
+
+    #[test]
+    fn now_requires_the_chrono_feature() {
+        let tokens = crate::lexer::Scanner::new("now()");
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains("'chrono' feature"),
+            "Expected the error to mention the 'chrono' feature, got '{error}'"
+        );
     }
 }

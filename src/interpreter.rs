@@ -47,6 +47,12 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         Cow::Owned(self.target.get(name))
     }
 
+    fn visit_function_call(&mut self, name: &str, _args: &[Expr]) -> Cow<'e, FilterValue> {
+        // Function names and arities are validated when the filter is parsed,
+        // so an unknown function here indicates a bug in the parser.
+        unreachable!("Encountered a call to an unexpected function '{name}'")
+    }
+
     fn visit_binary(
         &mut self,
         left: &'e Expr<'e>,

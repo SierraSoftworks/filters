@@ -11,6 +11,7 @@ use super::{FilterValue, pattern::Glob, token::Token};
 pub enum Expr<'a> {
     Literal(FilterValue),
     Property(&'a str),
+    FunctionCall(&'a str, Vec<Expr<'a>>),
     Binary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Logical(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Unary(Token<'a>, Box<Expr<'a>>),
@@ -33,6 +34,7 @@ pub trait ExprVisitor<'a, T> {
         match expr {
             Expr::Literal(value) => self.visit_literal(value),
             Expr::Property(name) => self.visit_property(name),
+            Expr::FunctionCall(name, args) => self.visit_function_call(name, args),
             Expr::Binary(left, operator, right) => self.visit_binary(left, operator, right),
             Expr::Logical(left, operator, right) => self.visit_logical(left, operator, right),
             Expr::Unary(operator, right) => self.visit_unary(operator, right),
@@ -44,6 +46,7 @@ pub trait ExprVisitor<'a, T> {
 
     fn visit_literal(&mut self, value: &'a FilterValue) -> T;
     fn visit_property(&mut self, name: &'a str) -> T;
+    fn visit_function_call(&mut self, name: &str, args: &[Expr]) -> T;
     fn visit_binary(
         &mut self,
         left: &'a Expr<'a>,
@@ -86,6 +89,15 @@ impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
 
     fn visit_property(&mut self, name: &'e str) -> std::fmt::Result {
         write!(self.0, "(property {})", name)
+    }
+
+    fn visit_function_call(&mut self, name: &str, args: &[Expr]) -> std::fmt::Result {
+        write!(self.0, "(call {}", name)?;
+        for arg in args {
+            write!(self.0, " ")?;
+            self.visit_expr(arg)?;
+        }
+        write!(self.0, ")")
     }
 
     fn visit_binary(
@@ -176,6 +188,11 @@ mod tests {
     #[case(
         Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile_cs("feat/*"),),
         "(like_cs (property branch.name) \"feat/*\")"
+    )]
+    #[case(Expr::FunctionCall("now", vec![]), "(call now)")]
+    #[case(
+        Expr::FunctionCall("now", vec![Expr::Literal(1.into()), Expr::Property("test")]),
+        "(call now 1 (property test))"
     )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {
         assert_eq!(view, format!("{expr}"));
