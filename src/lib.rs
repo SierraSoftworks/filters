@@ -190,6 +190,41 @@
 //!   dependency on the [regex](https://docs.rs/regex) crate). Without this
 //!   feature, filters using `matches` fail to parse with an error explaining
 //!   how to enable it.
+//!
+//! - **`secrecy`** — adds a `FilterValue::Secret` variant backed by the
+//!   [`secrecy`](https://docs.rs/secrecy) crate's `SecretString`. Secret values
+//!   behave exactly like strings in every comparison operation, but are always
+//!   formatted as `[REDACTED]`, making it impossible to leak them through
+//!   logging. See `FilterValue::secret` for details.
+//!
+//!   ```
+//!   # #[cfg(feature = "secrecy")] {
+//!   use filters::{Filter, FilterValue, Filterable};
+//!
+//!   struct Credentials {
+//!       password: secrecy::SecretString,
+//!   }
+//!
+//!   impl Filterable for Credentials {
+//!       fn get(&self, key: &str) -> FilterValue {
+//!           match key {
+//!               "password" => self.password.clone().into(),
+//!               _ => FilterValue::Null,
+//!           }
+//!       }
+//!   }
+//!
+//!   let creds = Credentials { password: "hunter2".into() };
+//!
+//!   // Secrets compare exactly like strings within filter expressions...
+//!   let filter = Filter::new(r#"password == "Hunter2""#).unwrap();
+//!   assert!(filter.matches(&creds).unwrap());
+//!
+//!   // ...but they are always redacted when formatted.
+//!   assert_eq!(creds.get("password").to_string(), "[REDACTED]");
+//!   # }
+//!   ```
+//!
 //! - **`serde`** — implements [`serde::Deserialize`] for [`Filter`], allowing
 //!   filters to be parsed directly out of configuration files (a missing or
 //!   `null` value deserializes to the match-everything `true` filter).

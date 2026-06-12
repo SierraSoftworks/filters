@@ -5,6 +5,9 @@ use crate::case_sensitivity::{
     caseless_contains, caseless_ends_with, caseless_eq, caseless_starts_with,
 };
 
+#[cfg(feature = "secrecy")]
+use secrecy::ExposeSecret;
+
 /// A trait for types which can be filtered by the filter system.
 ///
 /// Types which implement this trait can be filtered through the use
@@ -99,9 +102,43 @@ pub enum FilterValue {
     String(String),
     /// An ordered list of values, written as `[a, b, c]` in filter expressions.
     Tuple(Vec<FilterValue>),
+    /// A secret string value which behaves exactly like a [`FilterValue::String`]
+    /// in comparisons, but is always redacted as `[REDACTED]` when formatted.
+    #[cfg(feature = "secrecy")]
+    Secret(secrecy::SecretString),
 }
 
 impl FilterValue {
+    /// Creates a secret string value backed by a [`secrecy::SecretString`].
+    ///
+    /// Secret values behave exactly like a [`FilterValue::String`] in every
+    /// comparison operation (equality, ordering, `contains`, `in`,
+    /// `startswith`, `endswith`, and truthiness), but are always redacted as
+    /// `[REDACTED]` when formatted with [`Display`] or [`Debug`], making it
+    /// impossible to leak the underlying secret through logging.
+    ///
+    /// Note that, like every comparison in this crate, secret comparisons are
+    /// not constant-time and should not be relied upon to defend against
+    /// timing attacks.
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    ///
+    /// let password = FilterValue::secret("hunter2");
+    ///
+    /// // Secrets compare exactly like strings (case-insensitively for equality)...
+    /// assert_eq!(password, FilterValue::String("HUNTER2".to_string()));
+    /// assert!(password.contains(&"unter".into()));
+    ///
+    /// // ...but they are always redacted when formatted.
+    /// assert_eq!(password.to_string(), "[REDACTED]");
+    /// assert_eq!(format!("{password:?}"), "[REDACTED]");
+    /// ```
+    #[cfg(feature = "secrecy")]
+    pub fn secret(value: impl Into<String>) -> Self {
+        FilterValue::Secret(secrecy::SecretString::from(value.into()))
+    }
+
     /// Determines whether this value is considered "truthy" by the filter language.
     ///
     /// Filters match an object when their expression evaluates to a truthy
@@ -123,6 +160,8 @@ impl FilterValue {
             FilterValue::Number(n) => *n != 0.0,
             FilterValue::String(s) => !s.is_empty(),
             FilterValue::Tuple(v) => !v.is_empty(),
+            #[cfg(feature = "secrecy")]
+            FilterValue::Secret(s) => !s.expose_secret().is_empty(),
         }
     }
 
@@ -154,6 +193,18 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_contains(a, b),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                caseless_contains(a.expose_secret(), b.expose_secret())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => {
+                caseless_contains(a.expose_secret(), b)
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => {
+                caseless_contains(a, b.expose_secret())
+            }
             _ => false,
         }
     }
@@ -179,6 +230,18 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_starts_with(a, b),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                caseless_starts_with(a.expose_secret(), b.expose_secret())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => {
+                caseless_starts_with(a.expose_secret(), b)
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => {
+                caseless_starts_with(a, b.expose_secret())
+            }
             _ => false,
         }
     }
@@ -204,6 +267,18 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_ends_with(a, b),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                caseless_ends_with(a.expose_secret(), b.expose_secret())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => {
+                caseless_ends_with(a.expose_secret(), b)
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => {
+                caseless_ends_with(a, b.expose_secret())
+            }
             _ => false,
         }
     }
@@ -311,6 +386,18 @@ impl PartialEq for FilterValue {
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| a == b)
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret().eq_ignore_ascii_case(b.expose_secret())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => {
+                a.expose_secret().eq_ignore_ascii_case(b)
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => {
+                a.eq_ignore_ascii_case(b.expose_secret())
+            }
             _ => false,
         }
     }
@@ -334,6 +421,18 @@ impl PartialOrd for FilterValue {
                         .unwrap_or(Some(Ordering::Equal))
                 }
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret().partial_cmp(b.expose_secret())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => {
+                a.expose_secret().partial_cmp(b.as_str())
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => {
+                a.as_str().partial_cmp(b.expose_secret())
+            }
             _ => None, // Return None for non-comparable types
         }
     }
@@ -347,6 +446,14 @@ impl PartialOrd for FilterValue {
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() <= b.len() && a.iter().zip(b.iter()).all(|(a, b)| a < b)
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret() < b.expose_secret()
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() < b.as_str(),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => a.as_str() < b.expose_secret(),
             _ => false,
         }
     }
@@ -360,6 +467,14 @@ impl PartialOrd for FilterValue {
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() <= b.len() && a.iter().zip(b.iter()).all(|(a, b)| a <= b)
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret() <= b.expose_secret()
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() <= b.as_str(),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => a.as_str() <= b.expose_secret(),
             _ => false,
         }
     }
@@ -373,6 +488,14 @@ impl PartialOrd for FilterValue {
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() >= b.len() && a.iter().zip(b.iter()).all(|(a, b)| a > b)
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret() > b.expose_secret()
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() > b.as_str(),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => a.as_str() > b.expose_secret(),
             _ => false,
         }
     }
@@ -386,6 +509,14 @@ impl PartialOrd for FilterValue {
             (FilterValue::Tuple(a), FilterValue::Tuple(b)) => {
                 a.len() >= b.len() && a.iter().zip(b.iter()).all(|(a, b)| a >= b)
             }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret() >= b.expose_secret()
+            }
+            #[cfg(feature = "secrecy")]
+            (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() >= b.as_str(),
+            #[cfg(feature = "secrecy")]
+            (FilterValue::String(a), FilterValue::Secret(b)) => a.as_str() >= b.expose_secret(),
             _ => false,
         }
     }
@@ -400,6 +531,9 @@ impl Display for FilterValue {
     /// let value = FilterValue::Tuple(vec!["a".into(), 1.into(), FilterValue::Null]);
     /// assert_eq!(value.to_string(), r#"["a", 1, null]"#);
     /// ```
+    ///
+    /// Secret values (available with the `secrecy` feature) are always
+    /// formatted as `[REDACTED]`, never as their underlying string.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FilterValue::Null => write!(f, "null"),
@@ -418,6 +552,8 @@ impl Display for FilterValue {
                 }
                 write!(f, "]")
             }
+            #[cfg(feature = "secrecy")]
+            FilterValue::Secret(_) => write!(f, "[REDACTED]"),
         }
     }
 }
@@ -464,6 +600,23 @@ impl From<&str> for FilterValue {
 impl From<String> for FilterValue {
     fn from(s: String) -> Self {
         FilterValue::String(s)
+    }
+}
+
+#[cfg(feature = "secrecy")]
+impl From<secrecy::SecretString> for FilterValue {
+    /// Wraps a [`secrecy::SecretString`] as a [`FilterValue::Secret`].
+    ///
+    /// ```
+    /// use filters::FilterValue;
+    /// use secrecy::SecretString;
+    ///
+    /// let value: FilterValue = SecretString::from("hunter2").into();
+    /// assert_eq!(value, FilterValue::String("hunter2".to_string()));
+    /// assert_eq!(value.to_string(), "[REDACTED]");
+    /// ```
+    fn from(s: secrecy::SecretString) -> Self {
+        FilterValue::Secret(s)
     }
 }
 
@@ -790,5 +943,181 @@ mod tests {
         let needle: FilterValue = needle.into();
 
         assert_eq!(haystack.contains(&needle), expected);
+    }
+
+    #[cfg(feature = "secrecy")]
+    mod secrecy_tests {
+        use super::*;
+
+        #[rstest]
+        #[case(FilterValue::secret(""), false)]
+        #[case(FilterValue::secret("hunter2"), true)]
+        fn test_secret_truthy(#[case] value: FilterValue, #[case] truthy: bool) {
+            assert_eq!(value.is_truthy(), truthy);
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("hunter2"), FilterValue::secret("hunter2"), true)]
+        #[case(FilterValue::secret("hunter2"), FilterValue::secret("HUNTER2"), true)]
+        #[case(
+            FilterValue::secret("hunter2"),
+            FilterValue::secret("swordfish"),
+            false
+        )]
+        #[case(FilterValue::secret("hunter2"), "hunter2".into(), true)]
+        #[case(FilterValue::secret("hunter2"), "HUNTER2".into(), true)]
+        #[case("HUNTER2".into(), FilterValue::secret("hunter2"), true)]
+        #[case("swordfish".into(), FilterValue::secret("hunter2"), false)]
+        fn test_secret_equality(
+            #[case] left: FilterValue,
+            #[case] right: FilterValue,
+            #[case] equal: bool,
+        ) {
+            assert_eq!(left == right, equal);
+            assert_eq!(left != right, !equal);
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("abc"), FilterValue::secret("xyz"))]
+        #[case(FilterValue::secret("abc"), "xyz".into())]
+        #[case("abc".into(), FilterValue::secret("xyz"))]
+        fn test_secret_ordering(#[case] smaller: FilterValue, #[case] larger: FilterValue) {
+            assert_eq!(smaller.partial_cmp(&larger), Some(Ordering::Less));
+            assert_eq!(larger.partial_cmp(&smaller), Some(Ordering::Greater));
+            assert!(smaller < larger);
+            assert!(smaller <= larger);
+            assert!(larger > smaller);
+            assert!(larger >= smaller);
+            assert!(!smaller.gt(&larger));
+            assert!(!smaller.ge(&larger));
+            assert!(!larger.lt(&smaller));
+            assert!(!larger.le(&smaller));
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("Hello World"), "world".into(), true)]
+        #[case(FilterValue::secret("Hello World"), "mars".into(), false)]
+        #[case("Hello World".into(), FilterValue::secret("WORLD"), true)]
+        #[case("Hello World".into(), FilterValue::secret("mars"), false)]
+        #[case(FilterValue::secret("Hello World"), FilterValue::secret("WORLD"), true)]
+        #[case(FilterValue::Tuple(vec![FilterValue::secret("a"), "b".into()]), "A".into(), true)]
+        #[case(FilterValue::Tuple(vec!["a".into(), "b".into()]), FilterValue::secret("B"), true)]
+        #[case(FilterValue::Tuple(vec!["a".into(), "b".into()]), FilterValue::secret("c"), false)]
+        fn test_secret_contains(
+            #[case] value: FilterValue,
+            #[case] other: FilterValue,
+            #[case] expected: bool,
+        ) {
+            assert_eq!(value.contains(&other), expected);
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("Hello World"), "hello".into(), true)]
+        #[case(FilterValue::secret("Hello World"), "world".into(), false)]
+        #[case("Hello World".into(), FilterValue::secret("HELLO"), true)]
+        #[case("Hello World".into(), FilterValue::secret("world"), false)]
+        #[case(FilterValue::secret("Hello World"), FilterValue::secret("HELLO"), true)]
+        fn test_secret_startswith(
+            #[case] value: FilterValue,
+            #[case] other: FilterValue,
+            #[case] expected: bool,
+        ) {
+            assert_eq!(value.startswith(&other), expected);
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("Hello World"), "WORLD".into(), true)]
+        #[case(FilterValue::secret("Hello World"), "hello".into(), false)]
+        #[case("Hello World".into(), FilterValue::secret("world"), true)]
+        #[case("Hello World".into(), FilterValue::secret("hello"), false)]
+        #[case(FilterValue::secret("Hello World"), FilterValue::secret("world"), true)]
+        fn test_secret_endswith(
+            #[case] value: FilterValue,
+            #[case] other: FilterValue,
+            #[case] expected: bool,
+        ) {
+            assert_eq!(value.endswith(&other), expected);
+        }
+
+        #[rstest]
+        #[case(FilterValue::Null)]
+        #[case(FilterValue::Bool(true))]
+        #[case(FilterValue::Number(1.0))]
+        #[case(FilterValue::Tuple(vec!["hunter2".into()]))]
+        fn test_secrets_are_not_equal_or_ordered_against_other_types(#[case] other: FilterValue) {
+            let secret = FilterValue::secret("hunter2");
+            assert_ne!(secret, other);
+            assert_ne!(other, secret);
+            assert_eq!(secret.partial_cmp(&other), None);
+            assert_eq!(other.partial_cmp(&secret), None);
+            assert!(!secret.lt(&other));
+            assert!(!secret.le(&other));
+            assert!(!secret.gt(&other));
+            assert!(!secret.ge(&other));
+        }
+
+        #[rstest]
+        #[case(FilterValue::secret("hunter2"), "[REDACTED]")]
+        #[case(FilterValue::secret(""), "[REDACTED]")]
+        #[case(
+            FilterValue::Tuple(vec!["a".into(), FilterValue::secret("hunter2"), 1.into()]),
+            "[\"a\", [REDACTED], 1]"
+        )]
+        fn test_secret_display_is_redacted(#[case] value: FilterValue, #[case] expected: &str) {
+            assert_eq!(value.to_string(), expected);
+            assert_eq!(format!("{value:?}"), expected);
+            assert!(!value.to_string().contains("hunter2"));
+            assert!(!format!("{value:?}").contains("hunter2"));
+        }
+
+        #[test]
+        fn test_secret_conversions() {
+            let secret: FilterValue = secrecy::SecretString::from("hunter2").into();
+            assert_eq!(secret, FilterValue::secret("hunter2"));
+            assert!(matches!(secret, FilterValue::Secret(_)));
+            assert!(matches!(
+                FilterValue::secret(String::from("hunter2")),
+                FilterValue::Secret(_)
+            ));
+        }
+
+        /// For every comparison operation, a secret must behave exactly as the
+        /// equivalent string would — whichever side of the operator it is on.
+        #[rstest]
+        #[case("hunter2", "hunter2")]
+        #[case("hunter2", "HUNTER2")]
+        #[case("hunter2", "swordfish")]
+        #[case("abc", "abd")]
+        #[case("abd", "abc")]
+        #[case("Hello World", "WORLD")]
+        #[case("Hello World", "hello")]
+        #[case("", "")]
+        #[case("", "a")]
+        #[case("ÜBER", "über")]
+        fn test_secrets_behave_exactly_like_strings(#[case] secret: &str, #[case] other: &str) {
+            let as_secret = FilterValue::secret(secret);
+            let as_string = FilterValue::String(secret.to_string());
+            let other = FilterValue::String(other.to_string());
+
+            assert_eq!(as_secret == other, as_string == other);
+            assert_eq!(other == as_secret, other == as_string);
+            assert_eq!(as_secret.partial_cmp(&other), as_string.partial_cmp(&other));
+            assert_eq!(other.partial_cmp(&as_secret), other.partial_cmp(&as_string));
+            assert_eq!(as_secret < other, as_string < other);
+            assert_eq!(other < as_secret, other < as_string);
+            assert_eq!(as_secret <= other, as_string <= other);
+            assert_eq!(other <= as_secret, other <= as_string);
+            assert_eq!(as_secret > other, as_string > other);
+            assert_eq!(other > as_secret, other > as_string);
+            assert_eq!(as_secret >= other, as_string >= other);
+            assert_eq!(other >= as_secret, other >= as_string);
+            assert_eq!(as_secret.contains(&other), as_string.contains(&other));
+            assert_eq!(other.contains(&as_secret), other.contains(&as_string));
+            assert_eq!(as_secret.startswith(&other), as_string.startswith(&other));
+            assert_eq!(other.startswith(&as_secret), other.startswith(&as_string));
+            assert_eq!(as_secret.endswith(&other), as_string.endswith(&other));
+            assert_eq!(other.endswith(&as_secret), other.endswith(&as_string));
+            assert_eq!(as_secret.is_truthy(), as_string.is_truthy());
+        }
     }
 }
