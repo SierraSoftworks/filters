@@ -743,6 +743,33 @@ mod tests {
         assert_eq!(filter.raw(), "age >= 30 && alive");
     }
 
+    #[test]
+    fn clone_preserves_the_raw_expression_and_behaviour() {
+        let filter = Filter::new("age >= 30 && alive").expect("parse filter");
+        let clone = filter.clone();
+
+        assert_eq!(clone.raw(), filter.raw());
+        assert_eq!(clone, filter);
+        assert_eq!(
+            clone.matches(&TestObject::default()).expect("run filter"),
+            filter.matches(&TestObject::default()).expect("run filter"),
+        );
+    }
+
+    #[test]
+    fn equal_filters_compare_equal() {
+        let lhs = Filter::new("age >= 30 && alive").expect("parse filter");
+        let rhs = Filter::new("age >= 30 && alive").expect("parse filter");
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn different_filters_compare_unequal() {
+        let lhs = Filter::new("age >= 30").expect("parse filter");
+        let rhs = Filter::new("age >= 31").expect("parse filter");
+        assert_ne!(lhs, rhs);
+    }
+
     #[rstest]
     #[case("age >")]
     #[case("(alive")]
