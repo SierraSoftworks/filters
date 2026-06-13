@@ -9,7 +9,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 

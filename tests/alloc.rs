@@ -25,7 +25,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 struct CountingAllocator;
 

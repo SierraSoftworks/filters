@@ -8,7 +8,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 /// A fixture resembling the repository metadata which this crate was
 /// originally designed to filter (see the `github-backup` project).

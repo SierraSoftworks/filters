@@ -1,18 +1,18 @@
 [package]
-name = "filters"
+name = "filt-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A human-friendly filter expression language for matching your objects against user-provided queries."
-authors = ["Sierra Softworks <admin@sierrasoftworks.com>"]
+authors = ["Sierra Softworks <contact@sierrasoftworks.com>"]
 license = "MIT"
 repository = "https://github.com/SierraSoftworks/filters"
 homepage = "https://github.com/SierraSoftworks/filters"
-documentation = "https://docs.rs/filters"
+documentation = "https://docs.rs/filt-rs"
 readme = "README.md"
 keywords = ["filter", "expression", "dsl", "query", "matching"]
 categories = ["parser-implementations"]
-exclude = [".github/", "assets/"]
+exclude = [".github/", "assets/", "AGENTS.md", "CLAUDE.md"]
 
 [dependencies]
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock", "std"] }

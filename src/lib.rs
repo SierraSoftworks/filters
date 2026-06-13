@@ -16,7 +16,7 @@
 //! and evaluate it against your objects.
 //!
 //! ```
-//! use filters::{Filter, FilterValue, Filterable};
+//! use filt_rs::{Filter, FilterValue, Filterable};
 //!
 //! struct Repo {
 //!     name: &'static str,
@@ -35,7 +35,7 @@
 //!     }
 //! }
 //!
-//! # fn main() -> Result<(), filters::Error> {
+//! # fn main() -> Result<(), filt_rs::Error> {
 //! let filter = Filter::new("repo.public && repo.stars >= 50")?;
 //!
 //! let repo = Repo { name: "git-tool", public: true, stars: 87 };
@@ -124,7 +124,7 @@
 //! matches case-sensitively instead, with no folding at all.
 //!
 //! ```
-//! use filters::{Filter, FilterValue, Filterable};
+//! use filt_rs::{Filter, FilterValue, Filterable};
 //!
 //! struct Branch(&'static str);
 //!
@@ -137,7 +137,7 @@
 //!     }
 //! }
 //!
-//! # fn main() -> Result<(), filters::Error> {
+//! # fn main() -> Result<(), filt_rs::Error> {
 //! let filter = Filter::new(r#"branch.name like "feat/*""#)?;
 //! assert!(filter.matches(&Branch("feat/login"))?);
 //! assert!(filter.matches(&Branch("FEAT/LOGIN"))?);
@@ -155,7 +155,7 @@
 //! anchor the match).
 //!
 //! ```
-//! # use filters::{Filter, FilterValue, Filterable};
+//! # use filt_rs::{Filter, FilterValue, Filterable};
 //! # struct Branch(&'static str);
 //! # impl Filterable for Branch {
 //! #     fn get(&self, key: &str) -> FilterValue<'_> {
@@ -165,7 +165,7 @@
 //! #         }
 //! #     }
 //! # }
-//! # fn main() -> Result<(), filters::Error> {
+//! # fn main() -> Result<(), filt_rs::Error> {
 //! # #[cfg(feature = "regex")]
 //! # {
 //! let filter = Filter::new(r#"branch.name matches r"^release/v\d+(\.\d+){2}$""#)?;
@@ -196,12 +196,12 @@
 //! negative value.
 //!
 //! ```
-//! # use filters::Filter;
+//! # use filt_rs::Filter;
 //! # struct Nothing;
-//! # impl filters::Filterable for Nothing {
-//! #     fn get(&self, _key: &str) -> filters::FilterValue<'_> { filters::FilterValue::Null }
+//! # impl filt_rs::Filterable for Nothing {
+//! #     fn get(&self, _key: &str) -> filt_rs::FilterValue<'_> { filt_rs::FilterValue::Null }
 //! # }
-//! # fn main() -> Result<(), filters::Error> {
+//! # fn main() -> Result<(), filt_rs::Error> {
 //! let filter = Filter::new("1 + 2 - 4 < 0")?;
 //! assert!(filter.matches(&Nothing)?);
 //! # Ok(())
@@ -274,7 +274,7 @@
 //!
 //!   ```
 //!   # #[cfg(feature = "secrecy")] {
-//!   use filters::{Filter, FilterValue, Filterable};
+//!   use filt_rs::{Filter, FilterValue, Filterable};
 //!
 //!   struct Credentials {
 //!       password: secrecy::SecretString,
@@ -339,7 +339,7 @@ pub use value::{FilterValue, Filterable};
 /// [`Filter::matches`].
 ///
 /// ```
-/// use filters::{Filter, FilterValue, Filterable};
+/// use filt_rs::{Filter, FilterValue, Filterable};
 ///
 /// struct Server {
 ///     hostname: &'static str,
@@ -356,7 +356,7 @@ pub use value::{FilterValue, Filterable};
 ///     }
 /// }
 ///
-/// # fn main() -> Result<(), filters::Error> {
+/// # fn main() -> Result<(), filt_rs::Error> {
 /// let filter = Filter::new(r#"hostname startswith "web" && port == 443"#)?;
 ///
 /// assert!(filter.matches(&Server { hostname: "web-01", port: 443 })?);
@@ -368,7 +368,7 @@ pub use value::{FilterValue, Filterable};
 /// The default filter is the expression `true`, which matches every object:
 ///
 /// ```
-/// # use filters::{Filter, FilterValue, Filterable};
+/// # use filt_rs::{Filter, FilterValue, Filterable};
 /// # struct Anything;
 /// # impl Filterable for Anything {
 /// #     fn get(&self, _key: &str) -> FilterValue<'_> { FilterValue::Null }
@@ -391,7 +391,7 @@ impl Filter {
     /// location of the problem and guidance on how to correct it.
     ///
     /// ```
-    /// use filters::Filter;
+    /// use filt_rs::Filter;
     ///
     /// let filter = Filter::new("size > 100 && !archived").unwrap();
     /// assert_eq!(filter.raw(), "size > 100 && !archived");
@@ -422,7 +422,7 @@ impl Filter {
     /// a [truthy](FilterValue::is_truthy) value.
     ///
     /// ```
-    /// use filters::{Filter, FilterValue, Filterable};
+    /// use filt_rs::{Filter, FilterValue, Filterable};
     ///
     /// struct Message(&'static str);
     ///
@@ -435,7 +435,7 @@ impl Filter {
     ///     }
     /// }
     ///
-    /// # fn main() -> Result<(), filters::Error> {
+    /// # fn main() -> Result<(), filt_rs::Error> {
     /// let filter = Filter::new(r#"subject contains "invoice""#)?;
     /// assert!(filter.matches(&Message("Invoice #123"))?);
     /// assert!(!filter.matches(&Message("Weekly newsletter"))?);
@@ -449,7 +449,7 @@ impl Filter {
     /// Gets the raw filter expression which was used to construct this filter.
     ///
     /// ```
-    /// use filters::Filter;
+    /// use filt_rs::Filter;
     ///
     /// let filter = Filter::new("name == \"demo\"").unwrap();
     /// assert_eq!(filter.raw(), "name == \"demo\"");
@@ -474,7 +474,7 @@ impl std::fmt::Debug for Filter {
     /// when debugging operator precedence issues.
     ///
     /// ```
-    /// use filters::Filter;
+    /// use filt_rs::Filter;
     ///
     /// let filter = Filter::new("a || b && c").unwrap();
     /// assert_eq!(format!("{filter:?}"), "(|| (property a) (&& (property b) (property c)))");
@@ -488,7 +488,7 @@ impl Display for Filter {
     /// Formats the filter as its original raw expression.
     ///
     /// ```
-    /// use filters::Filter;
+    /// use filt_rs::Filter;
     ///
     /// let filter = Filter::new("a || b").unwrap();
     /// assert_eq!(filter.to_string(), "a || b");
@@ -507,7 +507,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
     /// your configuration structures.
     ///
     /// ```
-    /// use filters::Filter;
+    /// use filt_rs::Filter;
     ///
     /// #[derive(serde::Deserialize)]
     /// struct Config {

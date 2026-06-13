@@ -1,5 +1,5 @@
-<svg viewBox="0 0 560 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="filters">
-  <title>filters — a human-friendly filter expression language</title>
+<svg viewBox="0 0 560 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="filt-rs">
+  <title>filt-rs — a human-friendly filter expression language</title>
   <defs>
     <linearGradient id="funnel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#ff7a70"/>
@@ -36,6 +36,6 @@
   <!-- Wordmark, with the trailing "rs" highlighted in red -->
   <text x="180" y="124" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif"
         font-size="104" font-weight="800" letter-spacing="-2">
-    <tspan class="word" textLength="222" lengthAdjust="spacingAndGlyphs">filte</tspan><tspan fill="url(#rs)" textLength="104" lengthAdjust="spacingAndGlyphs">rs</tspan>
+    <tspan class="word" textLength="186" lengthAdjust="spacingAndGlyphs">filt</tspan><tspan fill="url(#rs)" textLength="140" lengthAdjust="spacingAndGlyphs">-rs</tspan>
   </text>
 </svg>

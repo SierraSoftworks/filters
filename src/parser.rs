@@ -120,11 +120,11 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             #[cfg(not(feature = "regex"))]
             return Err(human_errors::user(
                 format!(
-                    "Your filter uses the 'matches' operator at {}, but this build of the filters crate does not include regular expression support.",
+                    "Your filter uses the 'matches' operator at {}, but this build of the filt-rs crate does not include regular expression support.",
                     token.location()
                 ),
                 &[
-                    "Enable the 'regex' feature of the filters crate to use the 'matches' operator (e.g. filters = { version = \"0.1\", features = [\"regex\"] }).",
+                    "Enable the 'regex' feature of the filt-rs crate to use the 'matches' operator (e.g. filt-rs = { version = \"0.1\", features = [\"regex\"] }).",
                     "Alternatively, use the 'like' operator for simple glob-style patterns (e.g. branch.name like \"feat/*\").",
                 ],
             ));
@@ -317,7 +317,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                         "Your filter called the 'now()' function at {loc}, but datetime support is not enabled in this build."
                     ),
                     &[
-                        "Enable the 'chrono' feature of the filters crate to use datetime functions like 'now()'.",
+                        "Enable the 'chrono' feature of the filt-rs crate to use datetime functions like 'now()'.",
                     ],
                 ))
             }
@@ -403,7 +403,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 "Your filter used the duration '{lexeme}' at {loc}, but datetime support is not enabled in this build."
             ),
             &[
-                "Enable the 'chrono' feature of the filters crate to use duration literals like '5m' or '1h30m'.",
+                "Enable the 'chrono' feature of the filt-rs crate to use duration literals like '5m' or '1h30m'.",
             ],
         ))
     }
@@ -583,7 +583,7 @@ mod tests {
                 let message = e.to_string();
                 assert!(
                     message.contains(
-                        "Your filter uses the 'matches' operator at line 1, column 6, but this build of the filters crate does not include regular expression support."
+                        "Your filter uses the 'matches' operator at line 1, column 6, but this build of the filt-rs crate does not include regular expression support."
                     ),
                     "unexpected error: {message}"
                 );

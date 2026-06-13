@@ -25,7 +25,7 @@ use secrecy::ExposeSecret;
 /// then return the appropriate [`FilterValue`] for each key.
 ///
 /// ```
-/// use filters::{FilterValue, Filterable};
+/// use filt_rs::{FilterValue, Filterable};
 ///
 /// struct Repo {
 ///     name: String,
@@ -66,7 +66,7 @@ pub trait Filterable {
 /// construct from your own data within a [`Filterable::get`] implementation.
 ///
 /// ```
-/// use filters::FilterValue;
+/// use filt_rs::FilterValue;
 ///
 /// let value: FilterValue<'_> = 42.into();
 /// assert_eq!(value, FilterValue::Number(42.0));
@@ -85,7 +85,7 @@ pub trait Filterable {
 /// so multi-character folds such as `ß` → `ss` compare equal too.
 ///
 /// ```
-/// use filters::FilterValue;
+/// use filt_rs::FilterValue;
 ///
 /// let a: FilterValue<'_> = "Hello".into();
 /// let b: FilterValue<'_> = "hello".into();
@@ -144,7 +144,7 @@ impl<'a> FilterValue<'a> {
     /// timing attacks.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let password = FilterValue::secret("hunter2");
     ///
@@ -171,7 +171,7 @@ impl<'a> FilterValue<'a> {
     /// durations are truthy if (and only if) they are non-zero.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// assert!(FilterValue::Bool(true).is_truthy());
     /// assert!(FilterValue::String("hello".into()).is_truthy());
@@ -209,7 +209,7 @@ impl<'a> FilterValue<'a> {
     /// participate fully.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let haystack: FilterValue<'_> ="Hello World".into();
     /// assert!(haystack.contains(&"world".into()));
@@ -249,7 +249,7 @@ impl<'a> FilterValue<'a> {
     /// rest of the filter language (see [`FilterValue::contains`]).
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.startswith(&"hello".into()));
@@ -286,7 +286,7 @@ impl<'a> FilterValue<'a> {
     /// rest of the filter language (see [`FilterValue::contains`]).
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.endswith(&"WORLD".into()));
@@ -322,7 +322,7 @@ impl<'a> FilterValue<'a> {
     /// operators in the filter language.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value: FilterValue<'_> ="Hello".into();
     /// assert!(value.eq_cs(&"Hello".into()));
@@ -356,7 +356,7 @@ impl<'a> FilterValue<'a> {
     /// operators in the filter language.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let haystack: FilterValue<'_> ="Hello World".into();
     /// assert!(haystack.contains_cs(&"World".into()));
@@ -387,7 +387,7 @@ impl<'a> FilterValue<'a> {
     /// powering the `startswith_cs` operator in the filter language.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.startswith_cs(&"Hello".into()));
@@ -418,7 +418,7 @@ impl<'a> FilterValue<'a> {
     /// powering the `endswith_cs` operator in the filter language.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.endswith_cs(&"World".into()));
@@ -613,7 +613,7 @@ impl<'a> Display for FilterValue<'a> {
     /// Formats the value as it would appear within a filter expression.
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     ///
     /// let value = FilterValue::Tuple(vec!["a".into(), 1.into(), FilterValue::Null]);
     /// assert_eq!(value.to_string(), r#"["a", 1, null]"#);
@@ -744,7 +744,7 @@ impl<'a> From<secrecy::SecretString> for FilterValue<'a> {
     /// Wraps a [`secrecy::SecretString`] as a [`FilterValue::Secret`].
     ///
     /// ```
-    /// use filters::FilterValue;
+    /// use filt_rs::FilterValue;
     /// use secrecy::SecretString;
     ///
     /// let value: FilterValue<'_> =SecretString::from("hunter2").into();
@@ -761,7 +761,7 @@ impl<'a> From<secrecy::SecretString> for FilterValue<'a> {
 /// *Only available when the `chrono` crate feature is enabled.*
 ///
 /// ```
-/// use filters::FilterValue;
+/// use filt_rs::FilterValue;
 ///
 /// let timestamp = chrono::Utc::now();
 /// let value: FilterValue<'_> =timestamp.into();
@@ -779,7 +779,7 @@ impl<'a> From<chrono::DateTime<chrono::Utc>> for FilterValue<'a> {
 /// *Only available when the `chrono` crate feature is enabled.*
 ///
 /// ```
-/// use filters::FilterValue;
+/// use filt_rs::FilterValue;
 ///
 /// let value: FilterValue<'_> =chrono::Duration::minutes(90).into();
 /// assert_eq!(value.to_string(), "1h30m");
@@ -798,7 +798,7 @@ impl<'a> From<chrono::Duration> for FilterValue<'a> {
 /// *Only available when the `chrono` crate feature is enabled.*
 ///
 /// ```
-/// use filters::FilterValue;
+/// use filt_rs::FilterValue;
 /// use std::time::SystemTime;
 ///
 /// let value: FilterValue<'_> =SystemTime::UNIX_EPOCH.into();
