@@ -57,7 +57,7 @@ jobs:
 
       - name: Authenticate to crates.io
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.4
 
       - name: Publish
         # --allow-dirty: Cargo.toml/Cargo.lock are patched with the tag version
