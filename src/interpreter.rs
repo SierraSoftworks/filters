@@ -5,8 +5,8 @@ use super::pattern::CompiledRegex;
 use super::{
     FilterValue, Filterable,
     expr::{Expr, ExprVisitor},
+    operator::{BinaryOperator, LogicalOperator, UnaryOperator},
     pattern::Glob,
-    token::Token,
 };
 
 /// Applies a string predicate to a value following the leniency rules of the
@@ -51,7 +51,11 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
         Cow::Owned(target.get(name))
     }
 
-    fn visit_function_call(&mut self, name: &str, _args: &[Expr]) -> Cow<'e, FilterValue<'e>> {
+    fn visit_function_call(
+        &mut self,
+        name: &'e str,
+        _args: &'e [Expr<'e>],
+    ) -> Cow<'e, FilterValue<'e>> {
         match name {
             // now() is evaluated at filtering time, so each call to
             // Filter::matches sees the current time.
@@ -66,7 +70,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
     fn visit_binary(
         &mut self,
         left: &'e Expr<'e>,
-        operator: &'e Token<'e>,
+        operator: BinaryOperator,
         right: &'e Expr<'e>,
     ) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
@@ -79,53 +83,50 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
         let left = left.as_ref();
         let right = right.as_ref();
         match operator {
-            Token::Equals(..) => wrap_bool(left == right),
-            Token::NotEquals(..) => wrap_bool(left != right),
-            Token::Contains(..) => wrap_bool(left.contains(right)),
-            Token::ContainsCs(..) => wrap_bool(left.contains_cs(right)),
-            Token::In(..) => wrap_bool(right.contains(left)),
-            Token::InCs(..) => wrap_bool(right.contains_cs(left)),
-            Token::StartsWith(..) => wrap_bool(left.startswith(right)),
-            Token::StartsWithCs(..) => wrap_bool(left.startswith_cs(right)),
-            Token::EndsWith(..) => wrap_bool(left.endswith(right)),
-            Token::EndsWithCs(..) => wrap_bool(left.endswith_cs(right)),
-            Token::GreaterThan(..) => wrap_bool(left.gt(right)),
-            Token::SmallerThan(..) => wrap_bool(left.lt(right)),
-            Token::GreaterEqual(..) => wrap_bool(left.ge(right)),
-            Token::SmallerEqual(..) => wrap_bool(left.le(right)),
-            Token::Plus(..) => add(left.to_owned(), right.to_owned()),
-            Token::Minus(..) => subtract(left.to_owned(), right.to_owned()),
-            token => unreachable!("Encountered an unexpected binary operator '{token}'"),
+            BinaryOperator::Equals => wrap_bool(left == right),
+            BinaryOperator::NotEquals => wrap_bool(left != right),
+            BinaryOperator::Contains => wrap_bool(left.contains(right)),
+            BinaryOperator::ContainsCs => wrap_bool(left.contains_cs(right)),
+            BinaryOperator::In => wrap_bool(right.contains(left)),
+            BinaryOperator::InCs => wrap_bool(right.contains_cs(left)),
+            BinaryOperator::StartsWith => wrap_bool(left.startswith(right)),
+            BinaryOperator::StartsWithCs => wrap_bool(left.startswith_cs(right)),
+            BinaryOperator::EndsWith => wrap_bool(left.endswith(right)),
+            BinaryOperator::EndsWithCs => wrap_bool(left.endswith_cs(right)),
+            BinaryOperator::GreaterThan => wrap_bool(left.gt(right)),
+            BinaryOperator::SmallerThan => wrap_bool(left.lt(right)),
+            BinaryOperator::GreaterEqual => wrap_bool(left.ge(right)),
+            BinaryOperator::SmallerEqual => wrap_bool(left.le(right)),
+            BinaryOperator::Plus => add(left.to_owned(), right.to_owned()),
+            BinaryOperator::Minus => subtract(left.to_owned(), right.to_owned()),
         }
     }
 
     fn visit_logical(
         &mut self,
         left: &'e Expr<'e>,
-        operator: &'e Token<'e>,
+        operator: LogicalOperator,
         right: &'e Expr<'e>,
     ) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
 
         match operator {
-            Token::And(..) if left.is_truthy() => self.visit_expr(right),
-            Token::And(..) => left,
-            Token::Or(..) if !left.is_truthy() => self.visit_expr(right),
-            Token::Or(..) => left,
-            token => unreachable!("Encountered an unexpected logical operator '{token}'"),
+            LogicalOperator::And if left.is_truthy() => self.visit_expr(right),
+            LogicalOperator::And => left,
+            LogicalOperator::Or if !left.is_truthy() => self.visit_expr(right),
+            LogicalOperator::Or => left,
         }
     }
 
     fn visit_unary(
         &mut self,
-        operator: &'e Token<'e>,
+        operator: UnaryOperator,
         right: &'e Expr<'e>,
     ) -> Cow<'e, FilterValue<'e>> {
         let right = self.visit_expr(right);
 
         match operator {
-            Token::Not(..) => Cow::Owned(FilterValue::Bool(!right.is_truthy())),
-            token => unreachable!("Encountered an unexpected unary operator '{token}'"),
+            UnaryOperator::Not => Cow::Owned(FilterValue::Bool(!right.is_truthy())),
         }
     }
 

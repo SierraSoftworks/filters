@@ -49,6 +49,8 @@ it powers their backup policy filtering.
   configuration files with the `serde` feature.
 - **Optional secret values** — compare passwords and tokens in filters without
   ever being able to print them, with the `secrecy` feature.
+- **Optional visitor API** — walk and transform the parsed expression tree with
+  your own `ExprVisitor` via `Filter::visit`, behind the `visitor` feature.
 
 ## Usage
 
@@ -279,6 +281,60 @@ struct BackupPolicy {
 
 Missing or `null` filter fields deserialize to the match-everything filter
 `true`, so optional filters work out of the box.
+
+## Inspecting filters
+
+Enable the `visitor` feature to expose the parsed expression tree and walk it
+with your own visitor — useful for validating which properties a filter
+references, estimating its cost, or translating it into another query language:
+
+```shell
+cargo add filt-rs --features visitor
+```
+
+Implement the `ExprVisitor` trait and pass it to `Filter::visit`, which returns
+whatever your visitor produces. Each `visit_*` method is handed the relevant
+child nodes (and, for the binary/logical/unary cases, a `BinaryOperator`,
+`LogicalOperator`, or `UnaryOperator` so there's no ambiguity about which
+operators can appear where), so you control how the tree is traversed:
+
+```rust,ignore
+use std::collections::BTreeSet;
+use filt_rs::{BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Glob, LogicalOperator, UnaryOperator};
+
+#[derive(Default)]
+struct PropertyCollector<'a> {
+    properties: BTreeSet<&'a str>,
+}
+
+impl<'a> ExprVisitor<'a, ()> for PropertyCollector<'a> {
+    fn visit_property(&mut self, name: &'a str) {
+        self.properties.insert(name);
+    }
+    fn visit_binary(&mut self, l: &'a Expr<'a>, _op: BinaryOperator, r: &'a Expr<'a>) {
+        self.visit_expr(l);
+        self.visit_expr(r);
+    }
+    // ...and the other node kinds, recursing with `self.visit_expr(child)`.
+#   fn visit_literal(&mut self, _v: &'a FilterValue<'a>) {}
+#   fn visit_function_call(&mut self, _n: &'a str, args: &'a [Expr<'a>]) { for a in args { self.visit_expr(a); } }
+#   fn visit_logical(&mut self, l: &'a Expr<'a>, _op: LogicalOperator, r: &'a Expr<'a>) { self.visit_expr(l); self.visit_expr(r); }
+#   fn visit_unary(&mut self, _op: UnaryOperator, r: &'a Expr<'a>) { self.visit_expr(r); }
+#   fn visit_like(&mut self, l: &'a Expr<'a>, _g: &'a Glob) { self.visit_expr(l); }
+}
+
+let filter = Filter::new("repo.public && repo.stars >= 50")?;
+let mut collector = PropertyCollector::default();
+filter.visit(&mut collector);
+assert!(collector.properties.contains("repo.stars"));
+```
+
+See [`examples/property_collector.rs`](examples/property_collector.rs) for the
+complete, runnable version:
+
+```shell
+cargo run --example property_collector --features visitor
+```
 
 ## Performance
 
