@@ -51,18 +51,19 @@ struct Server {
 }
 
 impl Filterable for Server {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
-            // String and tuple values inherently allocate: `Filterable::get`
-            // must return an owned `FilterValue` (1 allocation for the
-            // String, 1 + len for the Tuple of strings).
+            // String values borrow directly from the server (via the borrowing
+            // `From<&str>` impl), so resolving them allocates nothing. A tuple
+            // still allocates its backing `Vec`, but the strings inside it are
+            // borrowed too — so a tuple of N strings costs exactly 1 allocation.
             "hostname" => self.hostname.into(),
             "region" => self.region.into(),
             "tags" => self
                 .tags
                 .iter()
                 .map(|&t| t.into())
-                .collect::<Vec<FilterValue>>()
+                .collect::<Vec<FilterValue<'_>>>()
                 .into(),
             // Numbers, booleans, and nulls are returned by value and never
             // touch the heap.
@@ -84,9 +85,11 @@ fn evaluation_allocation_counts() {
     };
 
     // Each case lists the expected number of heap allocations for a single
-    // `Filter::matches` call. The only allocations permitted are those made
-    // by `Filterable::get` itself (owned FilterValues are part of its public
-    // contract); the interpreter and the string operators must not allocate.
+    // `Filter::matches` call. Because `FilterValue` borrows its string data,
+    // a `Filterable::get` implementation that returns `self.field.as_str()`
+    // allocates nothing at all; the only evaluation-time allocation left is the
+    // backing `Vec` of a tuple property. The interpreter and the string
+    // operators must not allocate.
     let cases: &[(&str, usize, &str)] = &[
         ("true", 0, "a literal-only filter"),
         (
@@ -111,18 +114,18 @@ fn evaluation_allocation_counts() {
         ),
         (
             r#"hostname startswith "WEB" && hostname contains "example" && !(hostname endswith ".org")"#,
-            3,
-            "three string-property resolutions (one String allocation each, in get)",
+            0,
+            "three string-property resolutions (each borrows from the server, so none allocate)",
         ),
         (
             r#"region in ["eu-west-1", "eu-west-2"]"#,
-            1,
-            "a string property against a tuple literal (one String allocation in get)",
+            0,
+            "a string property against a tuple literal (the property borrows, so it doesn't allocate)",
         ),
         (
             r#"tags contains "production""#,
-            4,
-            "a tuple property (one Vec plus three Strings, all allocated in get)",
+            1,
+            "a tuple property (only the backing Vec allocates; its three strings are borrowed)",
         ),
     ];
 

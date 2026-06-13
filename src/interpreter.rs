@@ -13,7 +13,7 @@ use super::{
 /// pattern-matching operators: strings are tested directly, tuples match when
 /// any of their (directly nested) string elements match, and every other kind
 /// of value never matches.
-fn match_string_value<F: Fn(&str) -> bool>(value: &FilterValue, predicate: F) -> bool {
+fn match_string_value<F: Fn(&str) -> bool>(value: &FilterValue<'_>, predicate: F) -> bool {
     match value {
         FilterValue::String(s) => predicate(s),
         FilterValue::Tuple(items) => items
@@ -38,16 +38,20 @@ impl<'a, T: Filterable> FilterContext<'a, T> {
 /// does not allocate for literal values (including string and tuple
 /// literals); the only owned values are those produced by
 /// [`Filterable::get`] when a property is resolved.
-impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<'_, T> {
-    fn visit_literal(&mut self, value: &'e FilterValue) -> Cow<'e, FilterValue> {
+impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterContext<'e, T> {
+    fn visit_literal(&mut self, value: &'e FilterValue<'e>) -> Cow<'e, FilterValue<'e>> {
         Cow::Borrowed(value)
     }
 
-    fn visit_property(&mut self, name: &'e str) -> Cow<'e, FilterValue> {
-        Cow::Owned(self.target.get(name))
+    fn visit_property(&mut self, name: &'e str) -> Cow<'e, FilterValue<'e>> {
+        // Copy the `&'e T` out of `&mut self` first so the borrow produced by
+        // `get` is tied to the full target lifetime `'e` (and may therefore
+        // borrow from the target), not to this short `&mut self` reborrow.
+        let target: &'e T = self.target;
+        Cow::Owned(target.get(name))
     }
 
-    fn visit_function_call(&mut self, name: &str, _args: &[Expr]) -> Cow<'e, FilterValue> {
+    fn visit_function_call(&mut self, name: &str, _args: &[Expr]) -> Cow<'e, FilterValue<'e>> {
         match name {
             // now() is evaluated at filtering time, so each call to
             // Filter::matches sees the current time.
@@ -64,7 +68,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         left: &'e Expr<'e>,
         operator: &'e Token<'e>,
         right: &'e Expr<'e>,
-    ) -> Cow<'e, FilterValue> {
+    ) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
         let right = self.visit_expr(right);
 
@@ -100,7 +104,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         left: &'e Expr<'e>,
         operator: &'e Token<'e>,
         right: &'e Expr<'e>,
-    ) -> Cow<'e, FilterValue> {
+    ) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
 
         match operator {
@@ -116,7 +120,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         &mut self,
         operator: &'e Token<'e>,
         right: &'e Expr<'e>,
-    ) -> Cow<'e, FilterValue> {
+    ) -> Cow<'e, FilterValue<'e>> {
         let right = self.visit_expr(right);
 
         match operator {
@@ -125,7 +129,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         }
     }
 
-    fn visit_like(&mut self, left: &'e Expr<'e>, glob: &'e Glob) -> Cow<'e, FilterValue> {
+    fn visit_like(&mut self, left: &'e Expr<'e>, glob: &'e Glob) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
         Cow::Owned(FilterValue::Bool(match_string_value(left.as_ref(), |s| {
             glob.is_match(s)
@@ -137,7 +141,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         &mut self,
         left: &'e Expr<'e>,
         regex: &'e CompiledRegex,
-    ) -> Cow<'e, FilterValue> {
+    ) -> Cow<'e, FilterValue<'e>> {
         let left = self.visit_expr(left);
         Cow::Owned(FilterValue::Bool(match_string_value(left.as_ref(), |s| {
             regex.is_match(s)
@@ -147,7 +151,7 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
 
 /// Evaluates the `+` operator, returning [`FilterValue::Null`] for operand
 /// combinations which cannot be meaningfully added together.
-fn add<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+fn add<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, FilterValue<'a>> {
     match (left, right) {
         (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a + b)),
         #[cfg(feature = "chrono")]
@@ -174,7 +178,7 @@ fn add<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
 
 /// Evaluates the `-` operator, returning [`FilterValue::Null`] for operand
 /// combinations which cannot be meaningfully subtracted from one another.
-fn subtract<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+fn subtract<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, FilterValue<'a>> {
     match (left, right) {
         (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a - b)),
         #[cfg(feature = "chrono")]
@@ -198,7 +202,7 @@ fn subtract<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
 }
 
 #[inline]
-fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue> {
+fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue<'a>> {
     Cow::Owned(FilterValue::Bool(value))
 }
 
@@ -226,7 +230,7 @@ mod tests {
     }
 
     impl Filterable for TestFilterable {
-        fn get(&self, property: &str) -> FilterValue {
+        fn get(&self, property: &str) -> FilterValue<'_> {
             match property {
                 "boolean" => true.into(),
                 "string" => "Alice".into(),

@@ -347,7 +347,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
     /// [`FilterValue::Duration`]. The lexer has already validated the shape of
     /// the lexeme, so this only needs to accumulate the segments.
     #[cfg(feature = "chrono")]
-    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue, Error> {
+    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue<'a>, Error> {
         let mut total_ms = 0.0_f64;
         let mut rest = lexeme;
 
@@ -397,7 +397,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
     /// Without the `chrono` feature there is no duration type to parse into,
     /// so duration literals are rejected with advice to enable the feature.
     #[cfg(not(feature = "chrono"))]
-    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue, Error> {
+    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue<'a>, Error> {
         Err(human_errors::user(
             format!(
                 "Your filter used the duration '{lexeme}' at {loc}, but datetime support is not enabled in this build."
@@ -408,7 +408,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
         ))
     }
 
-    fn literal(&mut self) -> Result<FilterValue, Error> {
+    fn literal(&mut self) -> Result<FilterValue<'a>, Error> {
         match self.tokens.next() {
             Some(Ok(Token::True(..))) => Ok(true.into()),
             Some(Ok(Token::False(..))) => Ok(false.into()),
@@ -458,7 +458,7 @@ mod tests {
     #[case("[true]", FilterValue::Tuple(vec![true.into()]))]
     #[case("[\ntrue,\n]", FilterValue::Tuple(vec![true.into()]))]
     #[case("[true, false, \"test\", 123, null]", FilterValue::Tuple(vec![true.into(), false.into(), "test".into(), 123.into(), FilterValue::Null]))]
-    fn parsing_literals(#[case] input: &str, #[case] value: FilterValue) {
+    fn parsing_literals(#[case] input: &str, #[case] value: FilterValue<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(Expr::Literal(ast)) => assert_eq!(value, ast, "Expected {ast} to be {value}"),
@@ -472,7 +472,7 @@ mod tests {
     #[case("!false", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Literal(false.into()))))]
     #[case("!\"hello\"", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Literal("hello".into()))))]
     #[case("!!true", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Unary(Token::Not(Loc::new(1, 2)), Box::new(Expr::Literal(true.into()))))))]
-    fn parsing_unary_expressions(#[case] input: &str, #[case] ast: Expr) {
+    fn parsing_unary_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
@@ -493,7 +493,7 @@ mod tests {
     #[case("\"x\" in_cs \"xyz\"", Expr::Binary(Box::new(Expr::Literal("x".into())), Token::InCs(Loc::new(1, 5)), Box::new(Expr::Literal("xyz".into()))))]
     #[case("\"xyz\" startswith_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::StartsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
     #[case("\"xyz\" endswith_cs \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::EndsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("z".into()))))]
-    fn parse_comparison_expressions(#[case] input: &str, #[case] ast: Expr) {
+    fn parse_comparison_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
@@ -523,7 +523,7 @@ mod tests {
         "name like_cs r\"Feat/\\*\"",
         Expr::Like(Box::new(Expr::Property("name")), Glob::compile_cs("Feat/\\*"))
     )]
-    fn parsing_like_expressions(#[case] input: &str, #[case] ast: Expr) {
+    fn parsing_like_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
@@ -674,7 +674,7 @@ mod tests {
     #[case("true && false", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::And(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
     #[case("true || false", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::Or(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
     #[case("true && (true || false)", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::And(Loc::new(1, 6)), Box::new(Expr::Logical(Box::new(Expr::Literal(true.into())), Token::Or(Loc::new(1, 15)), Box::new(Expr::Literal(false.into()))))))]
-    fn parsing_logical_expressions(#[case] input: &str, #[case] ast: Expr) {
+    fn parsing_logical_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),

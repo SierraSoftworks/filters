@@ -41,7 +41,7 @@ impl Default for Repo {
 }
 
 impl Filterable for Repo {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "repo.name" => self.name.into(),
             "repo.full_name" => self.full_name.into(),
@@ -55,7 +55,65 @@ impl Filterable for Repo {
                 .topics
                 .iter()
                 .map(|&t| t.into())
-                .collect::<Vec<FilterValue>>()
+                .collect::<Vec<FilterValue<'_>>>()
+                .into(),
+            _ => FilterValue::Null,
+        }
+    }
+}
+
+/// The same fixture as [`Repo`], but its `Filterable::get` returns *owned*
+/// strings (allocating a fresh `String` for every string property it resolves).
+/// This models a client whose data isn't already available as `&str` and lets
+/// us measure exactly what the borrowing `FilterValue` saves over the previous
+/// always-allocating behaviour.
+struct OwnedRepo {
+    name: String,
+    full_name: String,
+    language: String,
+    stars: u32,
+    forks: u32,
+    archived: bool,
+    fork: bool,
+    public: bool,
+    topics: Vec<String>,
+}
+
+impl Default for OwnedRepo {
+    fn default() -> Self {
+        let borrowed = Repo::default();
+        Self {
+            name: borrowed.name.to_string(),
+            full_name: borrowed.full_name.to_string(),
+            language: borrowed.language.to_string(),
+            stars: borrowed.stars,
+            forks: borrowed.forks,
+            archived: borrowed.archived,
+            fork: borrowed.fork,
+            public: borrowed.public,
+            topics: borrowed.topics.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+}
+
+impl Filterable for OwnedRepo {
+    fn get(&self, key: &str) -> FilterValue<'_> {
+        match key {
+            // `.clone()` forces a heap allocation for every string property,
+            // exactly as `Filterable::get` used to before strings could borrow.
+            "repo.name" => self.name.clone().into(),
+            "repo.full_name" => self.full_name.clone().into(),
+            "repo.language" => self.language.clone().into(),
+            "repo.stars" => self.stars.into(),
+            "repo.forks" => self.forks.into(),
+            "repo.archived" => self.archived.into(),
+            "repo.fork" => self.fork.into(),
+            "repo.public" => self.public.into(),
+            "repo.topics" => self
+                .topics
+                .iter()
+                .map(|t| t.clone().into())
+                .collect::<Vec<FilterValue<'_>>>()
                 .into(),
             _ => FilterValue::Null,
         }
@@ -129,6 +187,43 @@ fn bench_evaluation(c: &mut Criterion) {
     group.finish();
 }
 
+/// Directly compares evaluating the same string-heavy filters against a fixture
+/// that *borrows* its string data versus one that returns *owned* strings. The
+/// gap between the two pairs is the allocation cost that lifetime-bounded
+/// `FilterValue`s eliminate for implementors who can hand out borrows.
+fn bench_borrowed_vs_owned(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eval_borrowed_vs_owned");
+    group.measurement_time(Duration::from_secs(5));
+
+    let borrowed = Repo::default();
+    let owned = OwnedRepo::default();
+
+    let cases: &[(&str, &str)] = &[
+        (
+            "string_heavy",
+            r#"repo.name startswith "git" && repo.full_name contains "sierra" && repo.language == "RUST" && !(repo.name endswith "-old")"#,
+        ),
+        ("compound_realistic", COMPLEX_FILTER),
+    ];
+
+    for &(name, expression) in cases {
+        let filter = Filter::new(expression).unwrap();
+        assert_eq!(
+            filter.matches(&borrowed).unwrap(),
+            filter.matches(&owned).unwrap()
+        );
+
+        group.bench_function(format!("{name}/borrowed"), |b| {
+            b.iter(|| filter.matches(black_box(&borrowed)).unwrap())
+        });
+        group.bench_function(format!("{name}/owned"), |b| {
+            b.iter(|| filter.matches(black_box(&owned)).unwrap())
+        });
+    }
+
+    group.finish();
+}
+
 fn config() -> Criterion {
     Criterion::default()
         .warm_up_time(Duration::from_secs(1))
@@ -138,6 +233,6 @@ fn config() -> Criterion {
 criterion_group! {
     name = benches;
     config = config();
-    targets = bench_parsing, bench_evaluation
+    targets = bench_parsing, bench_evaluation, bench_borrowed_vs_owned
 }
 criterion_main!(benches);

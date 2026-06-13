@@ -25,7 +25,7 @@
 //! }
 //!
 //! impl Filterable for Repo {
-//!     fn get(&self, key: &str) -> FilterValue {
+//!     fn get(&self, key: &str) -> FilterValue<'_> {
 //!         match key {
 //!             "repo.name" => self.name.into(),
 //!             "repo.public" => self.public.into(),
@@ -129,7 +129,7 @@
 //! struct Branch(&'static str);
 //!
 //! impl Filterable for Branch {
-//!     fn get(&self, key: &str) -> FilterValue {
+//!     fn get(&self, key: &str) -> FilterValue<'_> {
 //!         match key {
 //!             "branch.name" => self.0.into(),
 //!             _ => FilterValue::Null,
@@ -158,7 +158,7 @@
 //! # use filt_rs::{Filter, FilterValue, Filterable};
 //! # struct Branch(&'static str);
 //! # impl Filterable for Branch {
-//! #     fn get(&self, key: &str) -> FilterValue {
+//! #     fn get(&self, key: &str) -> FilterValue<'_> {
 //! #         match key {
 //! #             "branch.name" => self.0.into(),
 //! #             _ => FilterValue::Null,
@@ -199,7 +199,7 @@
 //! # use filt_rs::Filter;
 //! # struct Nothing;
 //! # impl filt_rs::Filterable for Nothing {
-//! #     fn get(&self, _key: &str) -> filt_rs::FilterValue { filt_rs::FilterValue::Null }
+//! #     fn get(&self, _key: &str) -> filt_rs::FilterValue<'_> { filt_rs::FilterValue::Null }
 //! # }
 //! # fn main() -> Result<(), filt_rs::Error> {
 //! let filter = Filter::new("1 + 2 - 4 < 0")?;
@@ -281,7 +281,7 @@
 //!   }
 //!
 //!   impl Filterable for Credentials {
-//!       fn get(&self, key: &str) -> FilterValue {
+//!       fn get(&self, key: &str) -> FilterValue<'_> {
 //!           match key {
 //!               "password" => self.password.clone().into(),
 //!               _ => FilterValue::Null,
@@ -347,7 +347,7 @@ pub use value::{FilterValue, Filterable};
 /// }
 ///
 /// impl Filterable for Server {
-///     fn get(&self, key: &str) -> FilterValue {
+///     fn get(&self, key: &str) -> FilterValue<'_> {
 ///         match key {
 ///             "hostname" => self.hostname.into(),
 ///             "port" => self.port.into(),
@@ -371,7 +371,7 @@ pub use value::{FilterValue, Filterable};
 /// # use filt_rs::{Filter, FilterValue, Filterable};
 /// # struct Anything;
 /// # impl Filterable for Anything {
-/// #     fn get(&self, _key: &str) -> FilterValue { FilterValue::Null }
+/// #     fn get(&self, _key: &str) -> FilterValue<'_> { FilterValue::Null }
 /// # }
 /// let filter = Filter::default();
 /// assert_eq!(filter.raw(), "true");
@@ -427,7 +427,7 @@ impl Filter {
     /// struct Message(&'static str);
     ///
     /// impl Filterable for Message {
-    ///     fn get(&self, key: &str) -> FilterValue {
+    ///     fn get(&self, key: &str) -> FilterValue<'_> {
     ///         match key {
     ///             "subject" => self.0.into(),
     ///             _ => FilterValue::Null,
@@ -585,7 +585,7 @@ mod tests {
     }
 
     impl Filterable for TestObject {
-        fn get(&self, property: &str) -> FilterValue {
+        fn get(&self, property: &str) -> FilterValue<'_> {
             match property {
                 "name" => self.name.clone().into(),
                 "age" => self.age.into(),
@@ -595,7 +595,7 @@ mod tests {
                     .iter()
                     .cloned()
                     .map(|v| v.into())
-                    .collect::<Vec<FilterValue>>()
+                    .collect::<Vec<FilterValue<'_>>>()
                     .into(),
                 _ => FilterValue::Null,
             }
