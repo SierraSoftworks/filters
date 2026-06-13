@@ -1040,7 +1040,11 @@ mod tests {
     #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["A".into()]), true)]
     #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["a".into()]), false)]
     #[case("1".into(), FilterValue::Number(1.0), false)]
-    fn test_eq_cs(#[case] left: FilterValue<'_>, #[case] right: FilterValue<'_>, #[case] expected: bool) {
+    fn test_eq_cs(
+        #[case] left: FilterValue<'_>,
+        #[case] right: FilterValue<'_>,
+        #[case] expected: bool,
+    ) {
         assert_eq!(left.eq_cs(&right), expected);
         assert_eq!(right.eq_cs(&left), expected);
     }
@@ -1104,8 +1108,8 @@ mod tests {
     #[case("ΛΟΓΟΣ", "σ")] // regular-sigma needle
     #[case("λογος", "Σ")] // word-final sigma in the haystack
     fn test_greek_sigma_forms_are_equivalent(#[case] haystack: &str, #[case] needle: &str) {
-        let haystack: FilterValue<'_> =haystack.into();
-        let needle: FilterValue<'_> =needle.into();
+        let haystack: FilterValue<'_> = haystack.into();
+        let needle: FilterValue<'_> = needle.into();
 
         assert!(haystack.endswith(&needle));
         assert!(haystack.contains(&needle));
@@ -1126,8 +1130,8 @@ mod tests {
         #[case] needle: &str,
         #[case] expected: bool,
     ) {
-        let haystack: FilterValue<'_> =haystack.into();
-        let needle: FilterValue<'_> =needle.into();
+        let haystack: FilterValue<'_> = haystack.into();
+        let needle: FilterValue<'_> = needle.into();
 
         assert_eq!(haystack.contains(&needle), expected);
     }
@@ -1231,7 +1235,9 @@ mod tests {
         #[case(FilterValue::Bool(true))]
         #[case(FilterValue::Number(1.0))]
         #[case(FilterValue::Tuple(vec!["hunter2".into()]))]
-        fn test_secrets_are_not_equal_or_ordered_against_other_types(#[case] other: FilterValue<'_>) {
+        fn test_secrets_are_not_equal_or_ordered_against_other_types(
+            #[case] other: FilterValue<'_>,
+        ) {
             let secret = FilterValue::secret("hunter2");
             assert_ne!(secret, other);
             assert_ne!(other, secret);
@@ -1259,7 +1265,7 @@ mod tests {
 
         #[test]
         fn test_secret_conversions() {
-            let secret: FilterValue<'_> =secrecy::SecretString::from("hunter2").into();
+            let secret: FilterValue<'_> = secrecy::SecretString::from("hunter2").into();
             assert_eq!(secret, FilterValue::secret("hunter2"));
             assert!(matches!(secret, FilterValue::Secret(_)));
             assert!(matches!(

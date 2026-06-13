@@ -199,13 +199,19 @@ fn bench_borrowed_vs_owned(c: &mut Criterion) {
     let owned = OwnedRepo::default();
 
     let cases: &[(&str, &str)] = &[
-        ("string_heavy", r#"repo.name startswith "git" && repo.full_name contains "sierra" && repo.language == "RUST" && !(repo.name endswith "-old")"#),
+        (
+            "string_heavy",
+            r#"repo.name startswith "git" && repo.full_name contains "sierra" && repo.language == "RUST" && !(repo.name endswith "-old")"#,
+        ),
         ("compound_realistic", COMPLEX_FILTER),
     ];
 
     for &(name, expression) in cases {
         let filter = Filter::new(expression).unwrap();
-        assert_eq!(filter.matches(&borrowed).unwrap(), filter.matches(&owned).unwrap());
+        assert_eq!(
+            filter.matches(&borrowed).unwrap(),
+            filter.matches(&owned).unwrap()
+        );
 
         group.bench_function(format!("{name}/borrowed"), |b| {
             b.iter(|| filter.matches(black_box(&borrowed)).unwrap())
