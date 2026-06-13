@@ -9,12 +9,13 @@
 //!
 //! What is (and isn't) proven here:
 //!
-//! - Resolving a string property inherently allocates, because
-//!   `Filterable::get` returns an owned `FilterValue::String`. We therefore
-//!   measure a baseline filter which only resolves the property
+//! - We measure a baseline filter which only resolves the property
 //!   (`branch.name`) and assert that evaluating `branch.name like "..."` (or
 //!   `... matches "..."`) performs *exactly* the same number of allocations —
-//!   i.e. the pattern matching itself contributes zero.
+//!   i.e. the pattern matching itself contributes zero. (Since `FilterValue`
+//!   borrows its string data, resolving `branch.name` is itself allocation
+//!   free here, so this baseline happens to be zero — but the invariant under
+//!   test is the *difference*, which holds regardless.)
 //! - For non-string properties no allocation happens at all, which we assert
 //!   as an absolute zero-allocation case.
 //! - Regex matching is *amortized* allocation-free: the regex engine lazily
@@ -63,7 +64,7 @@ fn count_allocations(f: impl FnOnce()) -> u64 {
 struct Branch(&'static str);
 
 impl Filterable for Branch {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "branch.name" => self.0.into(),
             "branch.protected" => true.into(),

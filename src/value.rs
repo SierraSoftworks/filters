@@ -34,7 +34,7 @@ use secrecy::ExposeSecret;
 /// }
 ///
 /// impl Filterable for Repo {
-///     fn get(&self, key: &str) -> FilterValue {
+///     fn get(&self, key: &str) -> FilterValue<'_> {
 ///         match key {
 ///             "repo.name" => self.name.as_str().into(),
 ///             "repo.public" => self.public.into(),
@@ -50,7 +50,12 @@ pub trait Filterable {
     /// This method should return the value of the property key as it
     /// pertains to the filterable object. If the key is not present,
     /// the method should return a [`FilterValue::Null`] value.
-    fn get(&self, key: &str) -> FilterValue;
+    ///
+    /// The returned value is bound to the lifetime of `&self`, so
+    /// implementations may borrow directly from the object being filtered
+    /// (for example by returning `FilterValue::String(Cow::Borrowed(..))`,
+    /// which is what `From<&str>` produces) to avoid copying its data.
+    fn get(&self, key: &str) -> FilterValue<'_>;
 }
 
 /// A value which may appear within a filter expression, either as a literal
@@ -63,13 +68,13 @@ pub trait Filterable {
 /// ```
 /// use filters::FilterValue;
 ///
-/// let value: FilterValue = 42.into();
+/// let value: FilterValue<'_> = 42.into();
 /// assert_eq!(value, FilterValue::Number(42.0));
 ///
-/// let value: FilterValue = Some("hello").into();
+/// let value: FilterValue<'_> = Some("hello").into();
 /// assert_eq!(value, FilterValue::String("hello".into()));
 ///
-/// let value: FilterValue = None::<bool>.into();
+/// let value: FilterValue<'_> = None::<bool>.into();
 /// assert_eq!(value, FilterValue::Null);
 /// ```
 ///
@@ -82,16 +87,16 @@ pub trait Filterable {
 /// ```
 /// use filters::FilterValue;
 ///
-/// let a: FilterValue = "Hello".into();
-/// let b: FilterValue = "hello".into();
+/// let a: FilterValue<'_> = "Hello".into();
+/// let b: FilterValue<'_> = "hello".into();
 /// assert_eq!(a, b);
 ///
-/// let a: FilterValue = "STRASSE".into();
-/// let b: FilterValue = "straße".into();
+/// let a: FilterValue<'_> = "STRASSE".into();
+/// let b: FilterValue<'_> = "straße".into();
 /// assert_eq!(a, b);
 /// ```
 #[derive(Clone, Default)]
-pub enum FilterValue {
+pub enum FilterValue<'a> {
     /// The absence of a value, also returned for unknown property keys.
     #[default]
     Null,
@@ -100,9 +105,13 @@ pub enum FilterValue {
     /// A numeric value; all numbers are represented as 64-bit floats.
     Number(f64),
     /// A string value, compared case-insensitively by the filter language.
-    String(Cow<'static, str>),
+    ///
+    /// The string may borrow from the object being filtered (when produced
+    /// by a [`Filterable::get`] implementation) or own its data, courtesy of
+    /// the [`Cow`].
+    String(Cow<'a, str>),
     /// An ordered list of values, written as `[a, b, c]` in filter expressions.
-    Tuple(Vec<FilterValue>),
+    Tuple(Vec<FilterValue<'a>>),
     /// A secret string value which behaves exactly like a [`FilterValue::String`]
     /// in comparisons, but is always redacted as `[REDACTED]` when formatted.
     #[cfg(feature = "secrecy")]
@@ -121,7 +130,7 @@ pub enum FilterValue {
     Duration(chrono::Duration),
 }
 
-impl FilterValue {
+impl<'a> FilterValue<'a> {
     /// Creates a secret string value backed by a [`secrecy::SecretString`].
     ///
     /// Secret values behave exactly like a [`FilterValue::String`] in every
@@ -202,14 +211,14 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let haystack: FilterValue = "Hello World".into();
+    /// let haystack: FilterValue<'_> ="Hello World".into();
     /// assert!(haystack.contains(&"world".into()));
     ///
     /// let tuple = FilterValue::Tuple(vec!["a".into(), "b".into()]);
     /// assert!(tuple.contains(&"a".into()));
     /// assert!(!tuple.contains(&"c".into()));
     /// ```
-    pub fn contains(&self, other: &FilterValue) -> bool {
+    pub fn contains(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_contains(a, b),
@@ -242,11 +251,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let value: FilterValue = "Hello World".into();
+    /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.startswith(&"hello".into()));
     /// assert!(!value.startswith(&"world".into()));
     /// ```
-    pub fn startswith(&self, other: &FilterValue) -> bool {
+    pub fn startswith(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_starts_with(a, b),
@@ -279,11 +288,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let value: FilterValue = "Hello World".into();
+    /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.endswith(&"WORLD".into()));
     /// assert!(!value.endswith(&"hello".into()));
     /// ```
-    pub fn endswith(&self, other: &FilterValue) -> bool {
+    pub fn endswith(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai == b),
             (FilterValue::String(a), FilterValue::String(b)) => caseless_ends_with(a, b),
@@ -315,11 +324,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let value: FilterValue = "Hello".into();
+    /// let value: FilterValue<'_> ="Hello".into();
     /// assert!(value.eq_cs(&"Hello".into()));
     /// assert!(!value.eq_cs(&"hello".into()));
     /// ```
-    pub fn eq_cs(&self, other: &FilterValue) -> bool {
+    pub fn eq_cs(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::String(a), FilterValue::String(b)) => a == b,
             #[cfg(feature = "secrecy")]
@@ -349,11 +358,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let haystack: FilterValue = "Hello World".into();
+    /// let haystack: FilterValue<'_> ="Hello World".into();
     /// assert!(haystack.contains_cs(&"World".into()));
     /// assert!(!haystack.contains_cs(&"world".into()));
     /// ```
-    pub fn contains_cs(&self, other: &FilterValue) -> bool {
+    pub fn contains_cs(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             (FilterValue::String(a), FilterValue::String(b)) => a.contains(b.as_ref()),
@@ -380,11 +389,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let value: FilterValue = "Hello World".into();
+    /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.startswith_cs(&"Hello".into()));
     /// assert!(!value.startswith_cs(&"hello".into()));
     /// ```
-    pub fn startswith_cs(&self, other: &FilterValue) -> bool {
+    pub fn startswith_cs(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             #[cfg(feature = "secrecy")]
@@ -411,11 +420,11 @@ impl FilterValue {
     /// ```
     /// use filters::FilterValue;
     ///
-    /// let value: FilterValue = "Hello World".into();
+    /// let value: FilterValue<'_> ="Hello World".into();
     /// assert!(value.endswith_cs(&"World".into()));
     /// assert!(!value.endswith_cs(&"WORLD".into()));
     /// ```
-    pub fn endswith_cs(&self, other: &FilterValue) -> bool {
+    pub fn endswith_cs(&self, other: &FilterValue<'a>) -> bool {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             #[cfg(feature = "secrecy")]
@@ -434,7 +443,7 @@ impl FilterValue {
     }
 }
 
-impl PartialEq for FilterValue {
+impl<'a> PartialEq for FilterValue<'a> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (FilterValue::Null, FilterValue::Null) => true,
@@ -461,7 +470,7 @@ impl PartialEq for FilterValue {
     }
 }
 
-impl PartialOrd for FilterValue {
+impl<'a> PartialOrd for FilterValue<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
             (FilterValue::Null, FilterValue::Null) => Some(Ordering::Equal),
@@ -600,7 +609,7 @@ impl PartialOrd for FilterValue {
     }
 }
 
-impl Display for FilterValue {
+impl<'a> Display for FilterValue<'a> {
     /// Formats the value as it would appear within a filter expression.
     ///
     /// ```
@@ -681,13 +690,13 @@ fn format_duration(
     Ok(())
 }
 
-impl Debug for FilterValue {
+impl<'a> Debug for FilterValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
     }
 }
 
-impl From<bool> for FilterValue {
+impl<'a> From<bool> for FilterValue<'a> {
     fn from(b: bool) -> Self {
         FilterValue::Bool(b)
     }
@@ -695,7 +704,7 @@ impl From<bool> for FilterValue {
 
 macro_rules! number {
     ($t:ty) => {
-        impl From<$t> for FilterValue {
+        impl<'a> From<$t> for FilterValue<'a> {
             fn from(n: $t) -> Self {
                 FilterValue::Number(n as f64)
             }
@@ -714,27 +723,31 @@ number!(f64);
 number!(i64);
 number!(u64);
 
-impl From<&str> for FilterValue {
-    fn from(s: &str) -> Self {
-        FilterValue::String(s.to_string().into())
+impl<'a> From<&'a str> for FilterValue<'a> {
+    /// Borrows the string slice rather than copying it, so a [`Filterable::get`]
+    /// implementation returning `self.field.as_str().into()` performs no
+    /// allocation. Use [`From<String>`] (or `.to_string().into()`) when you
+    /// need the value to own its data instead.
+    fn from(s: &'a str) -> Self {
+        FilterValue::String(Cow::Borrowed(s))
     }
 }
 
-impl From<String> for FilterValue {
+impl<'a> From<String> for FilterValue<'a> {
     fn from(s: String) -> Self {
-        FilterValue::String(s.into())
+        FilterValue::String(Cow::Owned(s))
     }
 }
 
 #[cfg(feature = "secrecy")]
-impl From<secrecy::SecretString> for FilterValue {
+impl<'a> From<secrecy::SecretString> for FilterValue<'a> {
     /// Wraps a [`secrecy::SecretString`] as a [`FilterValue::Secret`].
     ///
     /// ```
     /// use filters::FilterValue;
     /// use secrecy::SecretString;
     ///
-    /// let value: FilterValue = SecretString::from("hunter2").into();
+    /// let value: FilterValue<'_> =SecretString::from("hunter2").into();
     /// assert_eq!(value, FilterValue::String("hunter2".into()));
     /// assert_eq!(value.to_string(), "[REDACTED]");
     /// ```
@@ -751,11 +764,11 @@ impl From<secrecy::SecretString> for FilterValue {
 /// use filters::FilterValue;
 ///
 /// let timestamp = chrono::Utc::now();
-/// let value: FilterValue = timestamp.into();
+/// let value: FilterValue<'_> =timestamp.into();
 /// assert_eq!(value, FilterValue::DateTime(timestamp));
 /// ```
 #[cfg(feature = "chrono")]
-impl From<chrono::DateTime<chrono::Utc>> for FilterValue {
+impl<'a> From<chrono::DateTime<chrono::Utc>> for FilterValue<'a> {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
         FilterValue::DateTime(dt)
     }
@@ -768,11 +781,11 @@ impl From<chrono::DateTime<chrono::Utc>> for FilterValue {
 /// ```
 /// use filters::FilterValue;
 ///
-/// let value: FilterValue = chrono::Duration::minutes(90).into();
+/// let value: FilterValue<'_> =chrono::Duration::minutes(90).into();
 /// assert_eq!(value.to_string(), "1h30m");
 /// ```
 #[cfg(feature = "chrono")]
-impl From<chrono::Duration> for FilterValue {
+impl<'a> From<chrono::Duration> for FilterValue<'a> {
     fn from(d: chrono::Duration) -> Self {
         FilterValue::Duration(d)
     }
@@ -788,27 +801,27 @@ impl From<chrono::Duration> for FilterValue {
 /// use filters::FilterValue;
 /// use std::time::SystemTime;
 ///
-/// let value: FilterValue = SystemTime::UNIX_EPOCH.into();
+/// let value: FilterValue<'_> =SystemTime::UNIX_EPOCH.into();
 /// assert_eq!(value.to_string(), "1970-01-01T00:00:00Z");
 /// ```
 #[cfg(feature = "chrono")]
-impl From<std::time::SystemTime> for FilterValue {
+impl<'a> From<std::time::SystemTime> for FilterValue<'a> {
     fn from(t: std::time::SystemTime) -> Self {
         FilterValue::DateTime(t.into())
     }
 }
 
-impl<T> From<Option<T>> for FilterValue
+impl<'a, T> From<Option<T>> for FilterValue<'a>
 where
-    T: Into<FilterValue>,
+    T: Into<FilterValue<'a>>,
 {
     fn from(o: Option<T>) -> Self {
         o.map_or(FilterValue::Null, Into::into)
     }
 }
 
-impl From<Vec<FilterValue>> for FilterValue {
-    fn from(v: Vec<FilterValue>) -> Self {
+impl<'a> From<Vec<FilterValue<'a>>> for FilterValue<'a> {
+    fn from(v: Vec<FilterValue<'a>>) -> Self {
         FilterValue::Tuple(v)
     }
 }
@@ -829,8 +842,8 @@ mod tests {
     #[case(FilterValue::String("hello".into()), true)]
     #[case(FilterValue::Tuple(vec![]), false)]
     #[case(FilterValue::Tuple(vec![FilterValue::Bool(true)]), true)]
-    fn test_truthy<V: Into<FilterValue>>(#[case] value: V, #[case] truthy: bool) {
-        assert_eq!(value.into().is_truthy(), truthy);
+    fn test_truthy(#[case] value: FilterValue<'_>, #[case] truthy: bool) {
+        assert_eq!(value.is_truthy(), truthy);
     }
 
     #[test]
@@ -920,8 +933,8 @@ mod tests {
     #[case(FilterValue::Number(1.0), FilterValue::String("1".into()))]
     #[case(FilterValue::String("a".into()), FilterValue::Tuple(vec!["a".into()]))]
     fn test_mismatched_types_are_not_equal_or_ordered(
-        #[case] left: FilterValue,
-        #[case] right: FilterValue,
+        #[case] left: FilterValue<'_>,
+        #[case] right: FilterValue<'_>,
     ) {
         assert_ne!(left, right);
         assert_eq!(left.partial_cmp(&right), None);
@@ -948,7 +961,7 @@ mod tests {
     #[case(Some(1).into(), FilterValue::Number(1.0))]
     #[case(None::<i32>.into(), FilterValue::Null)]
     #[case(vec![FilterValue::Null].into(), FilterValue::Tuple(vec![FilterValue::Null]))]
-    fn test_conversions(#[case] converted: FilterValue, #[case] expected: FilterValue) {
+    fn test_conversions(#[case] converted: FilterValue<'_>, #[case] expected: FilterValue<'_>) {
         assert_eq!(converted, expected);
     }
 
@@ -962,7 +975,7 @@ mod tests {
     #[case(FilterValue::String("back\\slash".into()), "\"back\\\\slash\"")]
     #[case(FilterValue::Tuple(vec![]), "[]")]
     #[case(FilterValue::Tuple(vec![1.into(), "a".into()]), "[1, \"a\"]")]
-    fn test_display(#[case] value: FilterValue, #[case] expected: &str) {
+    fn test_display(#[case] value: FilterValue<'_>, #[case] expected: &str) {
         assert_eq!(value.to_string(), expected);
         assert_eq!(format!("{value:?}"), expected);
     }
@@ -977,8 +990,8 @@ mod tests {
     #[case(FilterValue::Null, FilterValue::Null, false)]
     #[case(FilterValue::Number(12.0), FilterValue::Number(2.0), false)]
     fn test_contains(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.contains(&other), expected);
@@ -991,8 +1004,8 @@ mod tests {
     #[case(FilterValue::Null, "a".into(), false)]
     #[case("Hello".into(), FilterValue::Null, false)]
     fn test_startswith(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.startswith(&other), expected);
@@ -1005,8 +1018,8 @@ mod tests {
     #[case(FilterValue::Null, "a".into(), false)]
     #[case("Hello".into(), FilterValue::Null, false)]
     fn test_endswith(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.endswith(&other), expected);
@@ -1027,7 +1040,11 @@ mod tests {
     #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["A".into()]), true)]
     #[case(FilterValue::Tuple(vec!["A".into()]), FilterValue::Tuple(vec!["a".into()]), false)]
     #[case("1".into(), FilterValue::Number(1.0), false)]
-    fn test_eq_cs(#[case] left: FilterValue, #[case] right: FilterValue, #[case] expected: bool) {
+    fn test_eq_cs(
+        #[case] left: FilterValue<'_>,
+        #[case] right: FilterValue<'_>,
+        #[case] expected: bool,
+    ) {
         assert_eq!(left.eq_cs(&right), expected);
         assert_eq!(right.eq_cs(&left), expected);
     }
@@ -1040,8 +1057,8 @@ mod tests {
     #[case(FilterValue::Null, FilterValue::Null, false)]
     #[case(FilterValue::Number(12.0), FilterValue::Number(2.0), false)]
     fn test_contains_cs(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.contains_cs(&other), expected);
@@ -1054,8 +1071,8 @@ mod tests {
     #[case(FilterValue::Tuple(vec!["A".into()]), "a".into(), false)]
     #[case(FilterValue::Null, "a".into(), false)]
     fn test_startswith_cs(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.startswith_cs(&other), expected);
@@ -1068,8 +1085,8 @@ mod tests {
     #[case(FilterValue::Tuple(vec!["A".into()]), "a".into(), false)]
     #[case(FilterValue::Null, "a".into(), false)]
     fn test_endswith_cs(
-        #[case] value: FilterValue,
-        #[case] other: FilterValue,
+        #[case] value: FilterValue<'_>,
+        #[case] other: FilterValue<'_>,
         #[case] expected: bool,
     ) {
         assert_eq!(value.endswith_cs(&other), expected);
@@ -1091,8 +1108,8 @@ mod tests {
     #[case("ΛΟΓΟΣ", "σ")] // regular-sigma needle
     #[case("λογος", "Σ")] // word-final sigma in the haystack
     fn test_greek_sigma_forms_are_equivalent(#[case] haystack: &str, #[case] needle: &str) {
-        let haystack: FilterValue = haystack.into();
-        let needle: FilterValue = needle.into();
+        let haystack: FilterValue<'_> = haystack.into();
+        let needle: FilterValue<'_> = needle.into();
 
         assert!(haystack.endswith(&needle));
         assert!(haystack.contains(&needle));
@@ -1113,8 +1130,8 @@ mod tests {
         #[case] needle: &str,
         #[case] expected: bool,
     ) {
-        let haystack: FilterValue = haystack.into();
-        let needle: FilterValue = needle.into();
+        let haystack: FilterValue<'_> = haystack.into();
+        let needle: FilterValue<'_> = needle.into();
 
         assert_eq!(haystack.contains(&needle), expected);
     }
@@ -1126,7 +1143,7 @@ mod tests {
         #[rstest]
         #[case(FilterValue::secret(""), false)]
         #[case(FilterValue::secret("hunter2"), true)]
-        fn test_secret_truthy(#[case] value: FilterValue, #[case] truthy: bool) {
+        fn test_secret_truthy(#[case] value: FilterValue<'_>, #[case] truthy: bool) {
             assert_eq!(value.is_truthy(), truthy);
         }
 
@@ -1143,8 +1160,8 @@ mod tests {
         #[case("HUNTER2".into(), FilterValue::secret("hunter2"), true)]
         #[case("swordfish".into(), FilterValue::secret("hunter2"), false)]
         fn test_secret_equality(
-            #[case] left: FilterValue,
-            #[case] right: FilterValue,
+            #[case] left: FilterValue<'_>,
+            #[case] right: FilterValue<'_>,
             #[case] equal: bool,
         ) {
             assert_eq!(left == right, equal);
@@ -1155,7 +1172,7 @@ mod tests {
         #[case(FilterValue::secret("abc"), FilterValue::secret("xyz"))]
         #[case(FilterValue::secret("abc"), "xyz".into())]
         #[case("abc".into(), FilterValue::secret("xyz"))]
-        fn test_secret_ordering(#[case] smaller: FilterValue, #[case] larger: FilterValue) {
+        fn test_secret_ordering(#[case] smaller: FilterValue<'_>, #[case] larger: FilterValue<'_>) {
             assert_eq!(smaller.partial_cmp(&larger), Some(Ordering::Less));
             assert_eq!(larger.partial_cmp(&smaller), Some(Ordering::Greater));
             assert!(smaller < larger);
@@ -1178,8 +1195,8 @@ mod tests {
         #[case(FilterValue::Tuple(vec!["a".into(), "b".into()]), FilterValue::secret("B"), true)]
         #[case(FilterValue::Tuple(vec!["a".into(), "b".into()]), FilterValue::secret("c"), false)]
         fn test_secret_contains(
-            #[case] value: FilterValue,
-            #[case] other: FilterValue,
+            #[case] value: FilterValue<'_>,
+            #[case] other: FilterValue<'_>,
             #[case] expected: bool,
         ) {
             assert_eq!(value.contains(&other), expected);
@@ -1192,8 +1209,8 @@ mod tests {
         #[case("Hello World".into(), FilterValue::secret("world"), false)]
         #[case(FilterValue::secret("Hello World"), FilterValue::secret("HELLO"), true)]
         fn test_secret_startswith(
-            #[case] value: FilterValue,
-            #[case] other: FilterValue,
+            #[case] value: FilterValue<'_>,
+            #[case] other: FilterValue<'_>,
             #[case] expected: bool,
         ) {
             assert_eq!(value.startswith(&other), expected);
@@ -1206,8 +1223,8 @@ mod tests {
         #[case("Hello World".into(), FilterValue::secret("hello"), false)]
         #[case(FilterValue::secret("Hello World"), FilterValue::secret("world"), true)]
         fn test_secret_endswith(
-            #[case] value: FilterValue,
-            #[case] other: FilterValue,
+            #[case] value: FilterValue<'_>,
+            #[case] other: FilterValue<'_>,
             #[case] expected: bool,
         ) {
             assert_eq!(value.endswith(&other), expected);
@@ -1218,7 +1235,9 @@ mod tests {
         #[case(FilterValue::Bool(true))]
         #[case(FilterValue::Number(1.0))]
         #[case(FilterValue::Tuple(vec!["hunter2".into()]))]
-        fn test_secrets_are_not_equal_or_ordered_against_other_types(#[case] other: FilterValue) {
+        fn test_secrets_are_not_equal_or_ordered_against_other_types(
+            #[case] other: FilterValue<'_>,
+        ) {
             let secret = FilterValue::secret("hunter2");
             assert_ne!(secret, other);
             assert_ne!(other, secret);
@@ -1237,7 +1256,7 @@ mod tests {
             FilterValue::Tuple(vec!["a".into(), FilterValue::secret("hunter2"), 1.into()]),
             "[\"a\", [REDACTED], 1]"
         )]
-        fn test_secret_display_is_redacted(#[case] value: FilterValue, #[case] expected: &str) {
+        fn test_secret_display_is_redacted(#[case] value: FilterValue<'_>, #[case] expected: &str) {
             assert_eq!(value.to_string(), expected);
             assert_eq!(format!("{value:?}"), expected);
             assert!(!value.to_string().contains("hunter2"));
@@ -1246,7 +1265,7 @@ mod tests {
 
         #[test]
         fn test_secret_conversions() {
-            let secret: FilterValue = secrecy::SecretString::from("hunter2").into();
+            let secret: FilterValue<'_> = secrecy::SecretString::from("hunter2").into();
             assert_eq!(secret, FilterValue::secret("hunter2"));
             assert!(matches!(secret, FilterValue::Secret(_)));
             assert!(matches!(
@@ -1416,8 +1435,8 @@ mod tests {
         #[case(FilterValue::Duration(Duration::minutes(5)), FilterValue::String("5m".into()))]
         #[case(FilterValue::DateTime(datetime()), FilterValue::Null)]
         fn test_mismatched_types_are_not_equal_or_ordered(
-            #[case] left: FilterValue,
-            #[case] right: FilterValue,
+            #[case] left: FilterValue<'_>,
+            #[case] right: FilterValue<'_>,
         ) {
             assert_ne!(left, right);
             assert_eq!(left.partial_cmp(&right), None);
@@ -1439,7 +1458,7 @@ mod tests {
             "1d1h1m1s1ms"
         )]
         #[case(FilterValue::Duration(Duration::minutes(-90)), "-1h30m")]
-        fn test_duration_display(#[case] value: FilterValue, #[case] expected: &str) {
+        fn test_duration_display(#[case] value: FilterValue<'_>, #[case] expected: &str) {
             assert_eq!(value.to_string(), expected);
         }
 

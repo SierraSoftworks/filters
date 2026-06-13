@@ -68,7 +68,7 @@ struct Repo {
 }
 
 impl Filterable for Repo {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "repo.name" => self.name.into(),
             "repo.public" => self.public.into(),
@@ -240,7 +240,7 @@ struct Event {
 }
 
 impl Filterable for Event {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "event.timestamp" => self.timestamp.into(),
             _ => FilterValue::Null,
@@ -305,7 +305,7 @@ struct User {
 }
 
 impl Filterable for User {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "user.password" => self.password.clone().into(),
             _ => FilterValue::Null,

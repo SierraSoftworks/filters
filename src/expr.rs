@@ -9,7 +9,7 @@ use super::{FilterValue, pattern::Glob, token::Token};
 // allocations.
 #[derive(PartialEq)]
 pub enum Expr<'a> {
-    Literal(FilterValue),
+    Literal(FilterValue<'a>),
     Property(&'a str),
     FunctionCall(&'a str, Vec<Expr<'a>>),
     Binary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
@@ -44,7 +44,7 @@ pub trait ExprVisitor<'a, T> {
         }
     }
 
-    fn visit_literal(&mut self, value: &'a FilterValue) -> T;
+    fn visit_literal(&mut self, value: &'a FilterValue<'a>) -> T;
     fn visit_property(&mut self, name: &'a str) -> T;
     fn visit_function_call(&mut self, name: &str, args: &[Expr]) -> T;
     fn visit_binary(
@@ -83,7 +83,7 @@ impl Debug for Expr<'_> {
 
 struct ExprPrinter<'a, 'b>(&'a mut std::fmt::Formatter<'b>);
 impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
-    fn visit_literal(&mut self, value: &'e FilterValue) -> std::fmt::Result {
+    fn visit_literal(&mut self, value: &'e FilterValue<'e>) -> std::fmt::Result {
         write!(self.0, "{}", value)
     }
 

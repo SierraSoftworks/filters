@@ -27,7 +27,7 @@ impl Default for Document {
 }
 
 impl Filterable for Document {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "doc.title" => self.title.as_str().into(),
             "doc.pages" => self.pages.into(),
@@ -37,7 +37,7 @@ impl Filterable for Document {
                 .tags
                 .iter()
                 .map(|&t| t.into())
-                .collect::<Vec<FilterValue>>()
+                .collect::<Vec<FilterValue<'_>>>()
                 .into(),
             "doc.nan" => f64::NAN.into(),
             _ => FilterValue::Null,
@@ -491,7 +491,7 @@ mod datetimes {
     }
 
     impl Filterable for Event {
-        fn get(&self, key: &str) -> FilterValue {
+        fn get(&self, key: &str) -> FilterValue<'_> {
             match key {
                 "event.timestamp" => self.timestamp.into(),
                 _ => FilterValue::Null,
