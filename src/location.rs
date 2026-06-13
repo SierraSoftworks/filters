@@ -1,12 +1,19 @@
 use std::fmt::Display;
 
+/// A position within a filter expression, identifying where a token was found.
+///
+/// Lines and columns are 1-based; the default `Loc { line: 0, column: 0 }`
+/// represents an unknown location and formats as `"unknown location"`.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Hash, Default)]
 pub struct Loc {
+    /// The 1-based line number (`0` if unknown).
     pub line: usize,
+    /// The 1-based column number (`0` if unknown).
     pub column: usize,
 }
 
 impl Loc {
+    /// Creates a new location at the given 1-based `line` and `column`.
     pub fn new(line: usize, column: usize) -> Self {
         Self { line, column }
     }

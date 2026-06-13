@@ -35,8 +35,8 @@ enum GlobToken {
 /// Character classes (`[a-z]`) and alternation (`{a,b}`) are *not* supported.
 ///
 /// Matching is case-insensitive by default ([`Glob::compile`]), using the
-/// same character folding rules as the rest of the filter language (see
-/// [`crate::case_sensitivity`]): both the pattern (at compile time) and the
+/// same character folding rules as the rest of the filter language: both the
+/// pattern (at compile time) and the
 /// input (at match time) are folded character-by-character via Unicode
 /// lowercasing, with all Greek sigma forms (`Σ`, `σ`, `ς`) treated as
 /// equivalent, and the pattern is matched against the folded input stream.

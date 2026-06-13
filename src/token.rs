@@ -1,52 +1,96 @@
 use std::fmt::Display;
 
 use super::location::Loc;
+use super::operator::{BinaryOperator, LogicalOperator, UnaryOperator};
 
+/// A lexical token produced by the scanner.
+///
+/// Every variant carries the source [`Loc`] at which it was found. Tokens are
+/// an internal detail of lexing and parsing: the operator tokens are converted
+/// into the public [`BinaryOperator`], [`LogicalOperator`], and
+/// [`UnaryOperator`] enums before being stored in the parsed expression tree.
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
+    /// An opening parenthesis `(`.
     LeftParen(Loc),
+    /// A closing parenthesis `)`.
     RightParen(Loc),
+    /// An opening bracket `[` (start of a tuple literal).
     LeftBracket(Loc),
+    /// A closing bracket `]` (end of a tuple literal).
     RightBracket(Loc),
+    /// A comma `,` separating tuple elements or function arguments.
     Comma(Loc),
 
+    /// A property reference, carrying the property's name.
     Property(Loc, &'a str),
 
+    /// The `null` literal.
     Null(Loc),
+    /// The `true` literal.
     True(Loc),
+    /// The `false` literal.
     False(Loc),
+    /// A double-quoted string literal, carrying its (escape-processed) contents.
     String(Loc, &'a str),
+    /// A raw string literal `r"..."`, carrying its verbatim contents.
     RawString(Loc, &'a str),
+    /// A numeric literal, carrying its source text.
     Number(Loc, &'a str),
+    /// A duration literal such as `5m` or `1h30m`, carrying its source text.
     Duration(Loc, &'a str),
 
+    /// The equality operator `==`.
     Equals(Loc),
+    /// The inequality operator `!=`.
     NotEquals(Loc),
+    /// The `contains` operator (case-insensitive).
     Contains(Loc),
+    /// The `contains_cs` operator (case-sensitive).
     ContainsCs(Loc),
+    /// The `in` operator (case-insensitive).
     In(Loc),
+    /// The `in_cs` operator (case-sensitive).
     InCs(Loc),
+    /// The `startswith` operator (case-insensitive).
     StartsWith(Loc),
+    /// The `startswith_cs` operator (case-sensitive).
     StartsWithCs(Loc),
+    /// The `endswith` operator (case-insensitive).
     EndsWith(Loc),
+    /// The `endswith_cs` operator (case-sensitive).
     EndsWithCs(Loc),
+    /// The `like` glob-match operator (case-insensitive).
     Like(Loc),
+    /// The `like_cs` glob-match operator (case-sensitive).
     LikeCs(Loc),
+    /// The `matches` regular-expression operator.
     Matches(Loc),
+    /// The greater-than operator `>`.
     GreaterThan(Loc),
+    /// The less-than operator `<`.
     SmallerThan(Loc),
+    /// The greater-than-or-equal operator `>=`.
     GreaterEqual(Loc),
+    /// The less-than-or-equal operator `<=`.
     SmallerEqual(Loc),
 
+    /// The addition operator `+`.
     Plus(Loc),
+    /// The subtraction operator `-`.
     Minus(Loc),
 
+    /// The logical NOT operator `!`.
     Not(Loc),
+    /// The logical AND operator `&&`.
     And(Loc),
+    /// The logical OR operator `||`.
     Or(Loc),
 }
 
 impl Token<'_> {
+    /// Returns the textual lexeme this token was parsed from (e.g. `"=="` for
+    /// [`Token::Equals`], or the property name for [`Token::Property`]).
     pub fn lexeme(&self) -> &str {
         match self {
             Token::LeftParen(..) => "(",
@@ -92,6 +136,64 @@ impl Token<'_> {
         }
     }
 
+    /// Converts a binary-operator token into its public [`BinaryOperator`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a token which is not a binary operator. The parser
+    /// only calls this on tokens it has already confirmed, so this never
+    /// happens in practice.
+    pub fn as_binary_operator(&self) -> BinaryOperator {
+        match self {
+            Token::Equals(..) => BinaryOperator::Equals,
+            Token::NotEquals(..) => BinaryOperator::NotEquals,
+            Token::GreaterThan(..) => BinaryOperator::GreaterThan,
+            Token::SmallerThan(..) => BinaryOperator::SmallerThan,
+            Token::GreaterEqual(..) => BinaryOperator::GreaterEqual,
+            Token::SmallerEqual(..) => BinaryOperator::SmallerEqual,
+            Token::Contains(..) => BinaryOperator::Contains,
+            Token::ContainsCs(..) => BinaryOperator::ContainsCs,
+            Token::In(..) => BinaryOperator::In,
+            Token::InCs(..) => BinaryOperator::InCs,
+            Token::StartsWith(..) => BinaryOperator::StartsWith,
+            Token::StartsWithCs(..) => BinaryOperator::StartsWithCs,
+            Token::EndsWith(..) => BinaryOperator::EndsWith,
+            Token::EndsWithCs(..) => BinaryOperator::EndsWithCs,
+            Token::Plus(..) => BinaryOperator::Plus,
+            Token::Minus(..) => BinaryOperator::Minus,
+            other => unreachable!("token '{other}' is not a binary operator"),
+        }
+    }
+
+    /// Converts a logical-operator token into its public [`LogicalOperator`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a token which is not `&&` or `||`. The parser only
+    /// calls this on tokens it has already confirmed, so this never happens in
+    /// practice.
+    pub fn as_logical_operator(&self) -> LogicalOperator {
+        match self {
+            Token::And(..) => LogicalOperator::And,
+            Token::Or(..) => LogicalOperator::Or,
+            other => unreachable!("token '{other}' is not a logical operator"),
+        }
+    }
+
+    /// Converts a unary-operator token into its public [`UnaryOperator`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a token which is not `!`. The parser only calls this
+    /// on tokens it has already confirmed, so this never happens in practice.
+    pub fn as_unary_operator(&self) -> UnaryOperator {
+        match self {
+            Token::Not(..) => UnaryOperator::Not,
+            other => unreachable!("token '{other}' is not a unary operator"),
+        }
+    }
+
+    /// Returns the source [`Loc`] at which this token appears.
     pub fn location(&self) -> Loc {
         match self {
             Token::LeftParen(loc) => *loc,

@@ -24,6 +24,14 @@ serde = { version = "1.0", optional = true }
 [features]
 default = []
 
+## Exposes the expression-visitor API — the [`Expr`] AST, the [`ExprVisitor`]
+## trait, the [`BinaryOperator`]/[`LogicalOperator`]/[`UnaryOperator`] enums,
+## and the [`Filter::visit`] method — so that downstream crates can walk and
+## transform a parsed filter (for example to collect the properties it
+## references or translate it into another query language). See the
+## `property_collector` example.
+visitor = []
+
 ## Enables the `matches` regular expression operator within filter expressions.
 regex = ["dep:regex"]
 
@@ -58,3 +66,9 @@ serde_json = "1.0"
 [[bench]]
 name = "filtering"
 harness = false
+
+# The property-collector example exercises the public visitor API, which is
+# only available when the `visitor` feature is enabled.
+[[example]]
+name = "property_collector"
+required-features = ["visitor"]

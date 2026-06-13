@@ -304,6 +304,15 @@
 //!   filters to be parsed directly out of configuration files (a missing or
 //!   `null` value deserializes to the match-everything `true` filter).
 //!
+//! - **`visitor`** — exposes the parsed expression tree and a visitor
+//!   interface: the `Expr` AST, the `ExprVisitor` trait, the `BinaryOperator`,
+//!   `LogicalOperator`, and `UnaryOperator` enums, and the `Filter::visit`
+//!   method. This lets downstream crates walk and transform a filter — for
+//!   example to collect the properties it references, estimate its cost, or
+//!   translate it into another query language. See the `property_collector`
+//!   example (`cargo run --example property_collector --features visitor`) for
+//!   a worked illustration.
+//!
 //! [`serde::Deserialize`]: https://docs.rs/serde/latest/serde/trait.Deserialize.html
 
 #![warn(missing_docs)]
@@ -318,6 +327,7 @@ mod expr;
 mod interpreter;
 mod lexer;
 mod location;
+mod operator;
 mod parser;
 mod pattern;
 mod token;
@@ -325,11 +335,26 @@ mod value;
 
 use std::{fmt::Display, pin::Pin, ptr::NonNull};
 
-use expr::{Expr, ExprVisitor};
 use interpreter::FilterContext;
 
 pub use human_errors::Error;
 pub use value::{FilterValue, Filterable};
+
+// The expression-visitor API is gated behind the `visitor` feature. The `Expr`
+// AST and `ExprVisitor` trait are always needed internally (the interpreter is
+// itself a visitor), so they are imported privately when the feature is off and
+// re-exported publicly when it is on.
+#[cfg(feature = "visitor")]
+pub use expr::{Expr, ExprVisitor};
+#[cfg(not(feature = "visitor"))]
+use expr::{Expr, ExprVisitor};
+
+#[cfg(feature = "visitor")]
+pub use operator::{BinaryOperator, LogicalOperator, UnaryOperator};
+#[cfg(all(feature = "visitor", feature = "regex"))]
+pub use pattern::CompiledRegex;
+#[cfg(feature = "visitor")]
+pub use pattern::Glob;
 
 /// A parsed filter expression which can be evaluated against [`Filterable`] objects.
 ///
@@ -443,7 +468,84 @@ impl Filter {
     /// # }
     /// ```
     pub fn matches<T: Filterable>(&self, target: &T) -> Result<bool, Error> {
-        Ok(FilterContext::new(target).visit_expr(&self.ast).is_truthy())
+        Ok(self.visit(&mut FilterContext::new(target)).is_truthy())
+    }
+
+    /// Walks this filter's parsed expression tree with a custom
+    /// [`ExprVisitor`], returning whatever the visitor produces.
+    ///
+    /// This is the public entry point for inspecting or transforming the
+    /// structure of a filter — for instance to collect the properties it
+    /// references, estimate its cost, or translate it into another query
+    /// language. The visitor is handed the root of the tree and is responsible
+    /// for recursing into child nodes (typically by calling
+    /// [`ExprVisitor::visit_expr`] on them).
+    ///
+    /// This method (along with the [`Expr`] and [`ExprVisitor`] types it
+    /// operates on, and the [`BinaryOperator`], [`LogicalOperator`], and
+    /// [`UnaryOperator`] enums) is only available when the **`visitor`** crate
+    /// feature is enabled.
+    ///
+    /// ```
+    /// use filt_rs::{
+    ///     BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Glob,
+    ///     LogicalOperator, UnaryOperator,
+    /// };
+    ///
+    /// /// Counts how many nodes a filter's expression tree contains.
+    /// struct NodeCounter;
+    ///
+    /// impl<'a> ExprVisitor<'a, usize> for NodeCounter {
+    ///     fn visit_literal(&mut self, _value: &FilterValue) -> usize { 1 }
+    ///     fn visit_property(&mut self, _name: &str) -> usize { 1 }
+    ///     fn visit_function_call(&mut self, _name: &str, args: &[Expr]) -> usize {
+    ///         1 + args.iter().map(|arg| self.visit_expr(arg)).sum::<usize>()
+    ///     }
+    ///     fn visit_binary(&mut self, l: &'a Expr<'a>, _op: BinaryOperator, r: &'a Expr<'a>) -> usize {
+    ///         1 + self.visit_expr(l) + self.visit_expr(r)
+    ///     }
+    ///     fn visit_logical(&mut self, l: &'a Expr<'a>, _op: LogicalOperator, r: &'a Expr<'a>) -> usize {
+    ///         1 + self.visit_expr(l) + self.visit_expr(r)
+    ///     }
+    ///     fn visit_unary(&mut self, _op: UnaryOperator, r: &'a Expr<'a>) -> usize {
+    ///         1 + self.visit_expr(r)
+    ///     }
+    ///     fn visit_like(&mut self, l: &'a Expr<'a>, _glob: &Glob) -> usize {
+    ///         1 + self.visit_expr(l)
+    ///     }
+    ///     # #[cfg(feature = "regex")]
+    ///     fn visit_matches(&mut self, l: &'a Expr<'a>, _re: &filt_rs::CompiledRegex) -> usize {
+    ///         1 + self.visit_expr(l)
+    ///     }
+    /// }
+    ///
+    /// # fn main() -> Result<(), filt_rs::Error> {
+    /// let filter = Filter::new("repo.public && repo.stars >= 50")?;
+    /// // (&&) + property + (>=) + property + literal → 5 nodes.
+    /// assert_eq!(filter.visit(&mut NodeCounter), 5);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "visitor")]
+    pub fn visit<'this, V, T>(&'this self, visitor: &mut V) -> T
+    where
+        V: ExprVisitor<'this, T>,
+    {
+        // The AST borrows from the pinned filter string, so its `'static`
+        // lifetime is really tied to `self`. Handing the visitor `&'this`
+        // borrows narrows that back down to the lifetime of this call.
+        visitor.visit_expr(&self.ast)
+    }
+
+    /// Internal expression walker used by [`Filter::matches`]. This is the same
+    /// as the public [`Filter::visit`], but remains available (crate-private)
+    /// when the `visitor` feature is disabled so that evaluation still works.
+    #[cfg(not(feature = "visitor"))]
+    pub(crate) fn visit<'this, V, T>(&'this self, visitor: &mut V) -> T
+    where
+        V: ExprVisitor<'this, T>,
+    {
+        visitor.visit_expr(&self.ast)
     }
 
     /// Gets the raw filter expression which was used to construct this filter.

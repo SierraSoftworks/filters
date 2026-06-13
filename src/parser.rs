@@ -40,9 +40,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
         let mut expr = self.and()?;
 
         while matches!(self.tokens.peek(), Some(Ok(Token::Or(..)))) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_logical_operator();
             let right = self.and()?;
-            expr = Expr::Logical(Box::new(expr), token, Box::new(right));
+            expr = Expr::Logical(Box::new(expr), operator, Box::new(right));
         }
 
         Ok(expr)
@@ -52,9 +52,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
         let mut expr = self.equality()?;
 
         while matches!(self.tokens.peek(), Some(Ok(Token::And(..)))) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_logical_operator();
             let right = self.equality()?;
-            expr = Expr::Logical(Box::new(expr), token, Box::new(right));
+            expr = Expr::Logical(Box::new(expr), operator, Box::new(right));
         }
 
         Ok(expr)
@@ -67,9 +67,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             self.tokens.peek(),
             Some(Ok(Token::Equals(..)) | Ok(Token::NotEquals(..)))
         ) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_binary_operator();
             let right = self.comparison()?;
-            expr = Expr::Binary(Box::new(expr), token, Box::new(right));
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
         }
 
         Ok(expr)
@@ -93,9 +93,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 | Some(Ok(Token::SmallerThan(..)))
                 | Some(Ok(Token::SmallerEqual(..)))
         ) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_binary_operator();
             let right = self.term()?;
-            expr = Expr::Binary(Box::new(expr), token, Box::new(right));
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
         } else if matches!(
             self.tokens.peek(),
             Some(Ok(Token::Like(..))) | Some(Ok(Token::LikeCs(..)))
@@ -156,9 +156,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             self.tokens.peek(),
             Some(Ok(Token::Plus(..)) | Ok(Token::Minus(..)))
         ) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_binary_operator();
             let right = self.unary()?;
-            expr = Expr::Binary(Box::new(expr), token, Box::new(right));
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
         }
 
         Ok(expr)
@@ -202,9 +202,9 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
 
     fn unary(&mut self) -> Result<Expr<'a>, Error> {
         if matches!(self.tokens.peek(), Some(Ok(Token::Not(..)))) {
-            let token = self.tokens.next().unwrap()?;
+            let operator = self.tokens.next().unwrap()?.as_unary_operator();
             let right = self.unary()?;
-            Ok(Expr::Unary(token, Box::new(right)))
+            Ok(Expr::Unary(operator, Box::new(right)))
         } else {
             self.primary()
         }
@@ -443,7 +443,10 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
 mod tests {
     use rstest::rstest;
 
-    use crate::{FilterValue, location::Loc};
+    use crate::{
+        FilterValue,
+        operator::{BinaryOperator, LogicalOperator, UnaryOperator},
+    };
 
     use super::*;
 
@@ -468,10 +471,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case("!true", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Literal(true.into()))))]
-    #[case("!false", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Literal(false.into()))))]
-    #[case("!\"hello\"", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Literal("hello".into()))))]
-    #[case("!!true", Expr::Unary(Token::Not(Loc::new(1, 1)), Box::new(Expr::Unary(Token::Not(Loc::new(1, 2)), Box::new(Expr::Literal(true.into()))))))]
+    #[case("!true", Expr::Unary(UnaryOperator::Not, Box::new(Expr::Literal(true.into()))))]
+    #[case("!false", Expr::Unary(UnaryOperator::Not, Box::new(Expr::Literal(false.into()))))]
+    #[case("!\"hello\"", Expr::Unary(UnaryOperator::Not, Box::new(Expr::Literal("hello".into()))))]
+    #[case("!!true", Expr::Unary(UnaryOperator::Not, Box::new(Expr::Unary(UnaryOperator::Not, Box::new(Expr::Literal(true.into()))))))]
     fn parsing_unary_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -481,18 +484,18 @@ mod tests {
     }
 
     #[rstest]
-    #[case("true == false", Expr::Binary(Box::new(Expr::Literal(true.into())), Token::Equals(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
-    #[case("true != false", Expr::Binary(Box::new(Expr::Literal(true.into())), Token::NotEquals(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
-    #[case("\"xyz\" startswith \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::StartsWith(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
-    #[case("\"xyz\" endswith \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::EndsWith(Loc::new(1, 7)), Box::new(Expr::Literal("z".into()))))]
-    #[case("1 < 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::SmallerThan(Loc::new(1, 2)), Box::new(Expr::Literal(2.0.into()))))]
-    #[case("1 > 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::GreaterThan(Loc::new(1, 2)), Box::new(Expr::Literal(2.0.into()))))]
-    #[case("1 <= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::SmallerEqual(Loc::new(1, 3)), Box::new(Expr::Literal(2.0.into()))))]
-    #[case("1 >= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), Token::GreaterEqual(Loc::new(1, 3)), Box::new(Expr::Literal(2.0.into()))))]
-    #[case("\"xyz\" contains_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::ContainsCs(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
-    #[case("\"x\" in_cs \"xyz\"", Expr::Binary(Box::new(Expr::Literal("x".into())), Token::InCs(Loc::new(1, 5)), Box::new(Expr::Literal("xyz".into()))))]
-    #[case("\"xyz\" startswith_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::StartsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("x".into()))))]
-    #[case("\"xyz\" endswith_cs \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), Token::EndsWithCs(Loc::new(1, 7)), Box::new(Expr::Literal("z".into()))))]
+    #[case("true == false", Expr::Binary(Box::new(Expr::Literal(true.into())), BinaryOperator::Equals, Box::new(Expr::Literal(false.into()))))]
+    #[case("true != false", Expr::Binary(Box::new(Expr::Literal(true.into())), BinaryOperator::NotEquals, Box::new(Expr::Literal(false.into()))))]
+    #[case("\"xyz\" startswith \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::StartsWith, Box::new(Expr::Literal("x".into()))))]
+    #[case("\"xyz\" endswith \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::EndsWith, Box::new(Expr::Literal("z".into()))))]
+    #[case("1 < 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), BinaryOperator::SmallerThan, Box::new(Expr::Literal(2.0.into()))))]
+    #[case("1 > 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), BinaryOperator::GreaterThan, Box::new(Expr::Literal(2.0.into()))))]
+    #[case("1 <= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), BinaryOperator::SmallerEqual, Box::new(Expr::Literal(2.0.into()))))]
+    #[case("1 >= 2", Expr::Binary(Box::new(Expr::Literal(1.0.into())), BinaryOperator::GreaterEqual, Box::new(Expr::Literal(2.0.into()))))]
+    #[case("\"xyz\" contains_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::ContainsCs, Box::new(Expr::Literal("x".into()))))]
+    #[case("\"x\" in_cs \"xyz\"", Expr::Binary(Box::new(Expr::Literal("x".into())), BinaryOperator::InCs, Box::new(Expr::Literal("xyz".into()))))]
+    #[case("\"xyz\" startswith_cs \"x\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::StartsWithCs, Box::new(Expr::Literal("x".into()))))]
+    #[case("\"xyz\" endswith_cs \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::EndsWithCs, Box::new(Expr::Literal("z".into()))))]
     fn parse_comparison_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -671,9 +674,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case("true && false", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::And(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
-    #[case("true || false", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::Or(Loc::new(1, 6)), Box::new(Expr::Literal(false.into()))))]
-    #[case("true && (true || false)", Expr::Logical(Box::new(Expr::Literal(true.into())), Token::And(Loc::new(1, 6)), Box::new(Expr::Logical(Box::new(Expr::Literal(true.into())), Token::Or(Loc::new(1, 15)), Box::new(Expr::Literal(false.into()))))))]
+    #[case("true && false", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::And, Box::new(Expr::Literal(false.into()))))]
+    #[case("true || false", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::Or, Box::new(Expr::Literal(false.into()))))]
+    #[case("true && (true || false)", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::And, Box::new(Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::Or, Box::new(Expr::Literal(false.into()))))))]
     fn parsing_logical_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
