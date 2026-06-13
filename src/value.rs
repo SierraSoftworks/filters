@@ -303,7 +303,9 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::String(a), FilterValue::String(b)) => a == b,
             #[cfg(feature = "secrecy")]
-            (FilterValue::Secret(a), FilterValue::Secret(b)) => a.expose_secret() == b.expose_secret(),
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret() == b.expose_secret()
+            }
             #[cfg(feature = "secrecy")]
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() == b,
             #[cfg(feature = "secrecy")]
@@ -336,7 +338,9 @@ impl FilterValue {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             (FilterValue::String(a), FilterValue::String(b)) => a.contains(b.as_str()),
             #[cfg(feature = "secrecy")]
-            (FilterValue::Secret(a), FilterValue::Secret(b)) => a.expose_secret().contains(b.expose_secret()),
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret().contains(b.expose_secret())
+            }
             #[cfg(feature = "secrecy")]
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret().contains(b),
             #[cfg(feature = "secrecy")]
@@ -362,7 +366,9 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             #[cfg(feature = "secrecy")]
-            (FilterValue::Secret(a), FilterValue::Secret(b)) => a.expose_secret().starts_with(b.expose_secret()),
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret().starts_with(b.expose_secret())
+            }
             #[cfg(feature = "secrecy")]
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret().starts_with(b),
             #[cfg(feature = "secrecy")]
@@ -389,7 +395,9 @@ impl FilterValue {
         match (self, other) {
             (FilterValue::Tuple(a), b) => a.iter().any(|ai| ai.eq_cs(b)),
             #[cfg(feature = "secrecy")]
-            (FilterValue::Secret(a), FilterValue::Secret(b)) => a.expose_secret().ends_with(b.expose_secret()),
+            (FilterValue::Secret(a), FilterValue::Secret(b)) => {
+                a.expose_secret().ends_with(b.expose_secret())
+            }
             #[cfg(feature = "secrecy")]
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret().ends_with(b),
             #[cfg(feature = "secrecy")]
@@ -415,13 +423,9 @@ impl PartialEq for FilterValue {
                 caseless_eq(a.expose_secret(), b.expose_secret())
             }
             #[cfg(feature = "secrecy")]
-            (FilterValue::Secret(a), FilterValue::String(b)) => {
-                caseless_eq(a.expose_secret(), b)
-            }
+            (FilterValue::Secret(a), FilterValue::String(b)) => caseless_eq(a.expose_secret(), b),
             #[cfg(feature = "secrecy")]
-            (FilterValue::String(a), FilterValue::Secret(b)) => {
-                caseless_eq(a, b.expose_secret())
-            }
+            (FilterValue::String(a), FilterValue::Secret(b)) => caseless_eq(a, b.expose_secret()),
             _ => false,
         }
     }
@@ -1123,25 +1127,85 @@ mod tests {
             let as_string = FilterValue::String(secret.to_string());
             let other = FilterValue::String(other.to_string());
 
-            assert_eq!(as_secret == other, as_string == other, "{secret} == {other}");
-            assert_eq!(other == as_secret, other == as_string, "{other} == {secret}");
-            assert_eq!(as_secret.partial_cmp(&other), as_string.partial_cmp(&other), "{secret} cmp {other}");
-            assert_eq!(other.partial_cmp(&as_secret), other.partial_cmp(&as_string), "{other} cmp {secret}");
+            assert_eq!(
+                as_secret == other,
+                as_string == other,
+                "{secret} == {other}"
+            );
+            assert_eq!(
+                other == as_secret,
+                other == as_string,
+                "{other} == {secret}"
+            );
+            assert_eq!(
+                as_secret.partial_cmp(&other),
+                as_string.partial_cmp(&other),
+                "{secret} cmp {other}"
+            );
+            assert_eq!(
+                other.partial_cmp(&as_secret),
+                other.partial_cmp(&as_string),
+                "{other} cmp {secret}"
+            );
             assert_eq!(as_secret < other, as_string < other, "{secret} < {other}");
             assert_eq!(other < as_secret, other < as_string, "{other} < {secret}");
-            assert_eq!(as_secret <= other, as_string <= other, "{secret} <= {other}");
-            assert_eq!(other <= as_secret, other <= as_string, "{other} <= {secret}");
+            assert_eq!(
+                as_secret <= other,
+                as_string <= other,
+                "{secret} <= {other}"
+            );
+            assert_eq!(
+                other <= as_secret,
+                other <= as_string,
+                "{other} <= {secret}"
+            );
             assert_eq!(as_secret > other, as_string > other, "{secret} > {other}");
             assert_eq!(other > as_secret, other > as_string, "{other} > {secret}");
-            assert_eq!(as_secret >= other, as_string >= other, "{secret} >= {other}");
-            assert_eq!(other >= as_secret, other >= as_string, "{other} >= {secret}");
-            assert_eq!(as_secret.contains(&other), as_string.contains(&other), "{secret} contains {other}");
-            assert_eq!(other.contains(&as_secret), other.contains(&as_string), "{other} contains {secret}");
-            assert_eq!(as_secret.startswith(&other), as_string.startswith(&other), "{secret} starts with {other}");
-            assert_eq!(other.startswith(&as_secret), other.startswith(&as_string), "{other} starts with {secret}");
-            assert_eq!(as_secret.endswith(&other), as_string.endswith(&other), "{secret} ends with {other}");
-            assert_eq!(other.endswith(&as_secret), other.endswith(&as_string), "{other} ends with {secret}");
-            assert_eq!(as_secret.is_truthy(), as_string.is_truthy(), "{secret} is_truthy");
+            assert_eq!(
+                as_secret >= other,
+                as_string >= other,
+                "{secret} >= {other}"
+            );
+            assert_eq!(
+                other >= as_secret,
+                other >= as_string,
+                "{other} >= {secret}"
+            );
+            assert_eq!(
+                as_secret.contains(&other),
+                as_string.contains(&other),
+                "{secret} contains {other}"
+            );
+            assert_eq!(
+                other.contains(&as_secret),
+                other.contains(&as_string),
+                "{other} contains {secret}"
+            );
+            assert_eq!(
+                as_secret.startswith(&other),
+                as_string.startswith(&other),
+                "{secret} starts with {other}"
+            );
+            assert_eq!(
+                other.startswith(&as_secret),
+                other.startswith(&as_string),
+                "{other} starts with {secret}"
+            );
+            assert_eq!(
+                as_secret.endswith(&other),
+                as_string.endswith(&other),
+                "{secret} ends with {other}"
+            );
+            assert_eq!(
+                other.endswith(&as_secret),
+                other.endswith(&as_string),
+                "{other} ends with {secret}"
+            );
+            assert_eq!(
+                as_secret.is_truthy(),
+                as_string.is_truthy(),
+                "{secret} is_truthy"
+            );
         }
     }
 }
