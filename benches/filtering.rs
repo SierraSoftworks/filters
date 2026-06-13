@@ -67,6 +67,7 @@ const COMPLEX_FILTER: &str = r#"repo.public && !repo.archived && (repo.language 
 
 fn bench_parsing(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
+    group.sample_size(1000);
 
     group.bench_function("simple", |b| {
         b.iter(|| Filter::new(black_box(SIMPLE_FILTER)).unwrap())
@@ -81,6 +82,8 @@ fn bench_parsing(c: &mut Criterion) {
 
 fn bench_evaluation(c: &mut Criterion) {
     let mut group = c.benchmark_group("eval");
+    group.sample_size(1000);
+
     let repo = Repo::default();
 
     let cases: &[(&str, &str, bool)] = &[
