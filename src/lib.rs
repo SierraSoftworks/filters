@@ -469,6 +469,18 @@ impl Default for Filter {
     }
 }
 
+impl Clone for Filter {
+    fn clone(&self) -> Self {
+        Self::new(self.raw()).expect("clone filter")
+    }
+}
+
+impl PartialEq for Filter {
+    fn eq(&self, other: &Self) -> bool {
+        self.ast == other.ast
+    }
+}
+
 impl std::fmt::Debug for Filter {
     /// Formats the filter as its parsed expression tree, which can be useful
     /// when debugging operator precedence issues.
@@ -495,6 +507,25 @@ impl Display for Filter {
     /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.raw())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Filter {
+    /// Serializes a `Filter` as its raw expression string.
+    ///
+    /// ```
+    /// use filt_rs::Filter;
+    ///
+    /// let filter = Filter::new("a || b").unwrap();
+    /// let json = serde_json::to_string(&filter).unwrap();
+    /// assert_eq!(json, r#""a || b""#);
+    /// ```
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.raw())
     }
 }
 
@@ -712,6 +743,33 @@ mod tests {
         assert_eq!(filter.raw(), "age >= 30 && alive");
     }
 
+    #[test]
+    fn clone_preserves_the_raw_expression_and_behaviour() {
+        let filter = Filter::new("age >= 30 && alive").expect("parse filter");
+        let clone = filter.clone();
+
+        assert_eq!(clone.raw(), filter.raw());
+        assert_eq!(clone, filter);
+        assert_eq!(
+            clone.matches(&TestObject::default()).expect("run filter"),
+            filter.matches(&TestObject::default()).expect("run filter"),
+        );
+    }
+
+    #[test]
+    fn equal_filters_compare_equal() {
+        let lhs = Filter::new("age >= 30 && alive").expect("parse filter");
+        let rhs = Filter::new("age >= 30 && alive").expect("parse filter");
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn different_filters_compare_unequal() {
+        let lhs = Filter::new("age >= 30").expect("parse filter");
+        let rhs = Filter::new("age >= 31").expect("parse filter");
+        assert_ne!(lhs, rhs);
+    }
+
     #[rstest]
     #[case("age >")]
     #[case("(alive")]
@@ -725,7 +783,7 @@ mod tests {
     mod serde_tests {
         use super::*;
 
-        #[derive(serde::Deserialize)]
+        #[derive(serde::Serialize, serde::Deserialize)]
         struct Config {
             #[serde(default)]
             filter: Filter,
@@ -760,6 +818,31 @@ mod tests {
         fn invalid_filters_fail_to_deserialize() {
             let result: Result<Config, _> = serde_json::from_str(r#"{"filter": "age >"}"#);
             assert!(result.is_err());
+        }
+
+        #[test]
+        fn serializes_a_filter_as_its_raw_expression() {
+            let filter = Filter::new("age > 21 && alive").expect("parse filter");
+            let json = serde_json::to_string(&filter).expect("serialize");
+            assert_eq!(json, r#""age > 21 && alive""#);
+        }
+
+        #[test]
+        fn serializes_a_filter_field() {
+            let config = Config {
+                filter: Filter::new("!repo.fork").expect("parse filter"),
+            };
+            let json = serde_json::to_string(&config).expect("serialize");
+            assert_eq!(json, r#"{"filter":"!repo.fork"}"#);
+        }
+
+        #[test]
+        fn round_trips_through_serde() {
+            let original: Config =
+                serde_json::from_str(r#"{"filter": "age > 21 && alive"}"#).expect("deserialize");
+            let json = serde_json::to_string(&original).expect("serialize");
+            let restored: Config = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored.filter.raw(), original.filter.raw());
         }
     }
 }
