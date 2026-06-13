@@ -17,6 +17,7 @@ exclude = [".github/", "assets/"]
 [dependencies]
 human-errors = "0.2.3"
 regex = { version = "1.11", optional = true }
+secrecy = { version = "0.10", optional = true }
 serde = { version = "1.0", optional = true }
 
 [features]
@@ -24,6 +25,10 @@ default = []
 
 ## Enables the `matches` regular expression operator within filter expressions.
 regex = ["dep:regex"]
+
+## Enables storing secret strings (backed by [`secrecy::SecretString`]) in a [`FilterValue`],
+## which behave like normal strings in comparisons but are always redacted when formatted.
+secrecy = ["dep:secrecy"]
 
 ## Enables deserializing a [`Filter`] directly from configuration files using serde.
 serde = ["dep:serde"]
@@ -39,6 +44,7 @@ harness = false
 criterion = "0.8"
 regex = "1.11"
 rstest = "0.26.1"
+secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
