@@ -26,7 +26,7 @@ impl Default for User {
 }
 
 impl Filterable for User {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "user.name" => self.name.into(),
             "user.password" => self.password.clone().into(),
@@ -35,7 +35,7 @@ impl Filterable for User {
                 .iter()
                 .cloned()
                 .map(FilterValue::from)
-                .collect::<Vec<FilterValue>>()
+                .collect::<Vec<FilterValue<'_>>>()
                 .into(),
             _ => FilterValue::Null,
         }
@@ -198,22 +198,30 @@ mod truthiness {
 mod redaction {
     use super::*;
 
-    #[rstest]
-    #[case(FilterValue::secret("hunter2"))]
-    #[case(SecretString::from("hunter2").into())]
-    #[case(User::default().get("user.password"))]
-    #[case(FilterValue::Tuple(vec!["a".into(), FilterValue::secret("hunter2")]))]
-    #[case(User::default().get("user.api-keys"))]
-    fn formatted_values_never_contain_the_secret(#[case] value: FilterValue) {
-        for formatted in [value.to_string(), format!("{value:?}")] {
-            assert!(
-                !formatted.contains("hunter2") && !formatted.contains("key-1"),
-                "the secret leaked into the formatted output: {formatted}"
-            );
-            assert!(
-                formatted.contains("[REDACTED]"),
-                "expected the redaction marker in: {formatted}"
-            );
+    #[test]
+    fn formatted_values_never_contain_the_secret() {
+        // `user` is bound to a local so that the values borrowed from its
+        // `Filterable::get` implementation outlive the assertions below.
+        let user = User::default();
+        let values: Vec<FilterValue<'_>> = vec![
+            FilterValue::secret("hunter2"),
+            SecretString::from("hunter2").into(),
+            user.get("user.password"),
+            FilterValue::Tuple(vec!["a".into(), FilterValue::secret("hunter2")]),
+            user.get("user.api-keys"),
+        ];
+
+        for value in values {
+            for formatted in [value.to_string(), format!("{value:?}")] {
+                assert!(
+                    !formatted.contains("hunter2") && !formatted.contains("key-1"),
+                    "the secret leaked into the formatted output: {formatted}"
+                );
+                assert!(
+                    formatted.contains("[REDACTED]"),
+                    "expected the redaction marker in: {formatted}"
+                );
+            }
         }
     }
 
@@ -235,13 +243,16 @@ mod equivalence {
     /// Evaluates the same filter against a user whose password property is a
     /// secret, and one where it is a plain string, asserting both agree.
     fn behaves_like_a_string(filter: &str) {
-        struct PlainUser;
+        // Wraps a `User` so that non-password properties can be delegated to
+        // it: because the inner `User` is owned by `self`, the borrowed values
+        // it returns are tied to `&self` rather than to a temporary.
+        struct PlainUser(User);
 
         impl Filterable for PlainUser {
-            fn get(&self, key: &str) -> FilterValue {
+            fn get(&self, key: &str) -> FilterValue<'_> {
                 match key {
                     "user.password" => "hunter2".into(),
-                    key => User::default().get(key),
+                    key => self.0.get(key),
                 }
             }
         }
@@ -252,7 +263,7 @@ mod equivalence {
                 .matches(&User::default())
                 .expect("the filter should evaluate against the secret"),
             filter
-                .matches(&PlainUser)
+                .matches(&PlainUser(User::default()))
                 .expect("the filter should evaluate against the string"),
             "'{filter}' behaved differently for a secret and a string"
         );

@@ -30,7 +30,7 @@ impl Branch {
 }
 
 impl Filterable for Branch {
-    fn get(&self, key: &str) -> FilterValue {
+    fn get(&self, key: &str) -> FilterValue<'_> {
         match key {
             "branch.name" => self.name.into(),
             "branch.protected" => self.protected.into(),
@@ -38,7 +38,7 @@ impl Filterable for Branch {
                 .reviewers
                 .iter()
                 .map(|&r| r.into())
-                .collect::<Vec<FilterValue>>()
+                .collect::<Vec<FilterValue<'_>>>()
                 .into(),
             _ => FilterValue::Null,
         }
