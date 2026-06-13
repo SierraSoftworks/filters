@@ -1,8 +1,8 @@
-//! Integration tests exercising the public API of the `filters` crate,
+//! Integration tests exercising the public API of the `filt-rs` crate,
 //! with a focus on edge cases, failure modes, and behavioural quirks
 //! which the unit tests don't cover.
 
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 use rstest::rstest;
 
 /// A reasonably rich object for exercising the filter language end-to-end.

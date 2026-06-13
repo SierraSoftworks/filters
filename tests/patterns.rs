@@ -1,7 +1,7 @@
 //! Integration tests for the `like` (glob) and `matches` (regex) operators,
 //! exercised end-to-end through the public `Filter` API.
 
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 use rstest::rstest;
 
 struct Branch {

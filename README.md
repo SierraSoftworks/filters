@@ -1,19 +1,19 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="filters" width="440">
+  <img src="assets/logo.svg" alt="filt-rs" width="440">
 
   <p><strong>A human-friendly filter expression language for matching your objects against user-provided queries.</strong></p>
 
   <p>
     <a href="https://github.com/SierraSoftworks/filters/actions/workflows/ci.yml"><img src="https://github.com/SierraSoftworks/filters/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://crates.io/crates/filters"><img src="https://img.shields.io/crates/v/filters.svg" alt="crates.io"></a>
-    <a href="https://docs.rs/filters"><img src="https://img.shields.io/docsrs/filters" alt="docs.rs"></a>
+    <a href="https://crates.io/crates/filt-rs"><img src="https://img.shields.io/crates/v/filt-rs.svg" alt="crates.io"></a>
+    <a href="https://docs.rs/filt-rs"><img src="https://img.shields.io/docsrs/filt-rs" alt="docs.rs"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/SierraSoftworks/filters" alt="MIT License"></a>
   </p>
 </div>
 
 ---
 
-`filters` gives your users a small, safe, and friendly expression language for
+`filt-rs` gives your users a small, safe, and friendly expression language for
 describing *which* of your objects a tool should operate on — which repositories
 to back up, which emails to restore, which releases to download. You implement
 a single-method trait to expose your object's properties, and your users write
@@ -53,13 +53,13 @@ it powers their backup policy filtering.
 ## Usage
 
 ```shell
-cargo add filters
+cargo add filt-rs
 ```
 
 Implement `Filterable` for your type, then parse and evaluate filters:
 
 ```rust
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 struct Repo {
     name: &'static str,
@@ -78,7 +78,7 @@ impl Filterable for Repo {
     }
 }
 
-fn main() -> Result<(), filters::Error> {
+fn main() -> Result<(), filt_rs::Error> {
     let filter = Filter::new("repo.public && repo.stars >= 50")?;
 
     let repo = Repo { name: "git-tool", public: true, stars: 87 };
@@ -204,7 +204,7 @@ tuples match when any of their string elements match, while `null`, booleans,
 and numbers never match.
 
 ```shell
-cargo add filters --features regex
+cargo add filt-rs --features regex
 ```
 
 ### Examples
@@ -225,7 +225,7 @@ Enable the `chrono` feature to filter on timestamps with relative-time
 expressions:
 
 ```shell
-cargo add filters --features chrono
+cargo add filt-rs --features chrono
 ```
 
 Expose a `FilterValue::DateTime` from your `Filterable` implementation (any
@@ -233,7 +233,7 @@ Expose a `FilterValue::DateTime` from your `Filterable` implementation (any
 and your users can write filters like `event.timestamp > now() - 5m`:
 
 ```rust,ignore
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 struct Event {
     timestamp: chrono::DateTime<chrono::Utc>,
@@ -264,7 +264,7 @@ Enable the `serde` feature to deserialize filters directly from your
 configuration files:
 
 ```shell
-cargo add filters --features serde
+cargo add filt-rs --features serde
 ```
 
 ```rust,ignore
@@ -273,7 +273,7 @@ struct BackupPolicy {
     kind: String,
     from: String,
     #[serde(default)]
-    filter: filters::Filter,
+    filter: filt_rs::Filter,
 }
 ```
 
@@ -294,11 +294,11 @@ secrets. Secret values behave exactly like strings in every filter operation,
 but are always redacted when formatted — so they can never leak into your logs:
 
 ```shell
-cargo add filters --features secrecy
+cargo add filt-rs --features secrecy
 ```
 
 ```rust,ignore
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 
 struct User {
     password: secrecy::SecretString,

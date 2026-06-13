@@ -4,7 +4,7 @@
 
 #![cfg(feature = "secrecy")]
 
-use filters::{Filter, FilterValue, Filterable};
+use filt_rs::{Filter, FilterValue, Filterable};
 use rstest::rstest;
 use secrecy::SecretString;
 

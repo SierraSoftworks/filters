@@ -1,9 +1,9 @@
-# Working on `filters`
+# Working on `filt-rs`
 
 Guidance for humans and coding agents contributing to this crate. `CLAUDE.md`
 is a symlink to this file, so both names point at the same instructions.
 
-`filters` is a small, human-friendly filter-expression DSL: users write a filter
+`filt-rs` is a small, human-friendly filter-expression DSL: users write a filter
 string, you implement the single-method `Filterable` trait on your type, and the
 crate parses the expression once (`Filter::new`) and evaluates it cheaply against
 any number of objects (`Filter::matches`).
