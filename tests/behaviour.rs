@@ -134,9 +134,51 @@ mod literals_and_truthiness {
 
     #[test]
     fn negative_numbers_are_not_literals() {
-        // There is no unary minus: "-5" lexes as a property reference, which
-        // resolves to null for objects which don't define it.
-        assert!(matches("-5 == null"));
+        // There is no unary minus: a leading '-' is the subtraction operator,
+        // so "-5" on its own is a parse error rather than a negative literal.
+        // (Earlier versions lexed "-5" as a property named "-5"; that quirk
+        // was retired when arithmetic was introduced.)
+        assert!(parse_error("-5 == null").contains("unexpected '-'"));
+
+        // Negative values can be produced via subtraction instead.
+        assert!(matches("0 - 5 < 0"));
+        assert!(matches("0 - 5 == 0 - 5"));
+    }
+}
+
+mod arithmetic {
+    use super::*;
+
+    #[rstest]
+    #[case("1 + 2 == 3", true)]
+    #[case("doc.pages - 2 == 550", true)]
+    #[case("doc.pages + 100 > 600", true)] // arithmetic binds tighter than comparisons
+    #[case("1 + 2 + 3 - 4 == 2", true)] // chains are evaluated left-to-right
+    #[case("doc.pages + null == null", true)] // mismatched operand types yield null
+    #[case("\"a\" + \"b\" == null", true)] // there is no string concatenation
+    fn arithmetic_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn hyphenated_property_names_are_not_subtraction() {
+        // A '-' inside an identifier remains part of the property name, so
+        // this resolves the (undefined) property "doc.pages-2" rather than
+        // subtracting 2 from doc.pages...
+        assert!(matches("doc.pages-2 == null"));
+
+        // ...while surrounding the '-' with whitespace makes it an operator.
+        assert!(matches("doc.pages - 2 == 550"));
+
+        // Properties like asset.source-code keep working as a single name.
+        assert!(matches("asset.source-code == null"));
+    }
+
+    #[test]
+    fn there_is_no_unary_minus_or_plus() {
+        assert!(parse_error("-5").contains("unexpected '-'"));
+        assert!(parse_error("+5").contains("unexpected '+'"));
+        assert!(parse_error("doc.pages > -5").contains("unexpected '-'"));
     }
 }
 
@@ -383,6 +425,125 @@ mod logic {
 
         let filter = vec!["missing"; 500].join(" || ");
         assert!(!matches(&filter));
+    }
+}
+
+mod functions {
+    use super::*;
+
+    #[test]
+    fn unknown_functions_fail_at_parse_time() {
+        let error = parse_error("nope()");
+        assert!(
+            error.contains("unknown function 'nope()'"),
+            "expected an unknown-function error, got: {error}"
+        );
+        assert!(
+            error.contains("now()"),
+            "expected the error to list the supported functions, got: {error}"
+        );
+    }
+
+    #[test]
+    fn unclosed_function_calls_are_rejected() {
+        assert!(parse_error("now(1").contains("didn't find the closing ')'"));
+        assert!(parse_error("now(").contains("end of your filter expression"));
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn now_requires_the_chrono_feature() {
+        assert!(parse_error("now()").contains("'chrono' feature"));
+    }
+}
+
+mod durations {
+    use super::*;
+
+    #[rstest]
+    #[case("5x")]
+    #[case("5mm")]
+    #[case("5min")]
+    #[case("1h30")]
+    fn malformed_durations_are_rejected(#[case] filter: &str) {
+        let error = parse_error(filter);
+        assert!(
+            error.contains("duration"),
+            "expected a duration error for '{filter}', got: {error}"
+        );
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn duration_literals_require_the_chrono_feature() {
+        assert!(parse_error("5m").contains("'chrono' feature"));
+        assert!(parse_error("uploaded.age > 1h30m").contains("'chrono' feature"));
+    }
+}
+
+#[cfg(feature = "chrono")]
+mod datetimes {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    struct Event {
+        timestamp: chrono::DateTime<Utc>,
+    }
+
+    impl Filterable for Event {
+        fn get(&self, key: &str) -> FilterValue {
+            match key {
+                "event.timestamp" => self.timestamp.into(),
+                _ => FilterValue::Null,
+            }
+        }
+    }
+
+    #[test]
+    fn events_can_be_filtered_by_relative_time() {
+        let filter = Filter::new("event.timestamp > now() - 5m").expect("parse filter");
+
+        let recent = Event {
+            timestamp: Utc::now(),
+        };
+        assert!(filter.matches(&recent).expect("run filter"));
+
+        let stale = Event {
+            timestamp: Utc::now() - Duration::minutes(10),
+        };
+        assert!(!filter.matches(&stale).expect("run filter"));
+    }
+
+    #[test]
+    fn now_is_evaluated_at_filtering_time() {
+        // A single parsed filter sees a fresh "now" on every matches() call,
+        // so an event which is too old right now can still match later.
+        let filter = Filter::new("now() - event.timestamp >= 1ms").expect("parse filter");
+
+        let event = Event {
+            timestamp: Utc::now(),
+        };
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(filter.matches(&event).expect("run filter"));
+    }
+
+    #[rstest]
+    #[case("now() + 1h > now()", true)]
+    #[case("now() - now() < 1s", true)]
+    #[case("now() - now() > 0s - 1s", true)] // approximately the zero duration
+    #[case("5m < 1h", true)]
+    #[case("60s == 1m", true)]
+    #[case("1h30m == 90m", true)]
+    #[case("500ms + 500ms == 1s", true)]
+    #[case("1w == 7d", true)]
+    #[case("now() == 5m", false)] // datetimes and durations never compare equal
+    fn datetime_and_duration_semantics(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn now_rejects_arguments_at_parse_time() {
+        assert!(parse_error("now(1)").contains("does not accept any arguments"));
     }
 }
 

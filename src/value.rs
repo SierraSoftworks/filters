@@ -107,6 +107,18 @@ pub enum FilterValue {
     /// in comparisons, but is always redacted as `[REDACTED]` when formatted.
     #[cfg(feature = "secrecy")]
     Secret(secrecy::SecretString),
+    /// A point in time (in UTC), produced by functions like `now()` or by a
+    /// [`Filterable::get`] implementation. Displayed in RFC 3339 format.
+    ///
+    /// *Only available when the `chrono` crate feature is enabled.*
+    #[cfg(feature = "chrono")]
+    DateTime(chrono::DateTime<chrono::Utc>),
+    /// A span of time, written as duration literals like `5m` or `1h30m` in
+    /// filter expressions. Displayed in the same compact form (e.g. `1h30m`).
+    ///
+    /// *Only available when the `chrono` crate feature is enabled.*
+    #[cfg(feature = "chrono")]
+    Duration(chrono::Duration),
 }
 
 impl FilterValue {
@@ -146,6 +158,9 @@ impl FilterValue {
     /// value. [`FilterValue::Null`], `false`, `0`, empty strings, and empty
     /// tuples are falsy; everything else is truthy.
     ///
+    /// With the `chrono` feature enabled, datetimes are always truthy, while
+    /// durations are truthy if (and only if) they are non-zero.
+    ///
     /// ```
     /// use filters::FilterValue;
     ///
@@ -163,6 +178,10 @@ impl FilterValue {
             FilterValue::Tuple(v) => !v.is_empty(),
             #[cfg(feature = "secrecy")]
             FilterValue::Secret(s) => !s.expose_secret().is_empty(),
+            #[cfg(feature = "chrono")]
+            FilterValue::DateTime(..) => true,
+            #[cfg(feature = "chrono")]
+            FilterValue::Duration(d) => !d.is_zero(),
         }
     }
 
@@ -433,6 +452,10 @@ impl PartialEq for FilterValue {
             (FilterValue::Secret(a), FilterValue::String(b)) => caseless_eq(a.expose_secret(), b),
             #[cfg(feature = "secrecy")]
             (FilterValue::String(a), FilterValue::Secret(b)) => caseless_eq(a, b.expose_secret()),
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a == b,
             _ => false,
         }
     }
@@ -468,6 +491,10 @@ impl PartialOrd for FilterValue {
             (FilterValue::String(a), FilterValue::Secret(b)) => {
                 a.as_ref().partial_cmp(b.expose_secret())
             }
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a.partial_cmp(b),
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a.partial_cmp(b),
             _ => None, // Return None for non-comparable types
         }
     }
@@ -489,6 +516,10 @@ impl PartialOrd for FilterValue {
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() < b.as_ref(),
             #[cfg(feature = "secrecy")]
             (FilterValue::String(a), FilterValue::Secret(b)) => a.as_ref() < b.expose_secret(),
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a < b,
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a < b,
             _ => false,
         }
     }
@@ -510,6 +541,10 @@ impl PartialOrd for FilterValue {
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() <= b.as_ref(),
             #[cfg(feature = "secrecy")]
             (FilterValue::String(a), FilterValue::Secret(b)) => a.as_ref() <= b.expose_secret(),
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a <= b,
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a <= b,
             _ => false,
         }
     }
@@ -531,6 +566,10 @@ impl PartialOrd for FilterValue {
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() > b.as_ref(),
             #[cfg(feature = "secrecy")]
             (FilterValue::String(a), FilterValue::Secret(b)) => a.as_ref() > b.expose_secret(),
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a > b,
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a > b,
             _ => false,
         }
     }
@@ -552,6 +591,10 @@ impl PartialOrd for FilterValue {
             (FilterValue::Secret(a), FilterValue::String(b)) => a.expose_secret() >= b.as_ref(),
             #[cfg(feature = "secrecy")]
             (FilterValue::String(a), FilterValue::Secret(b)) => a.as_ref() >= b.expose_secret(),
+            #[cfg(feature = "chrono")]
+            (FilterValue::DateTime(a), FilterValue::DateTime(b)) => a >= b,
+            #[cfg(feature = "chrono")]
+            (FilterValue::Duration(a), FilterValue::Duration(b)) => a >= b,
             _ => false,
         }
     }
@@ -589,8 +632,53 @@ impl Display for FilterValue {
             }
             #[cfg(feature = "secrecy")]
             FilterValue::Secret(_) => write!(f, "[REDACTED]"),
+            #[cfg(feature = "chrono")]
+            FilterValue::DateTime(dt) => {
+                write!(
+                    f,
+                    "{}",
+                    dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                )
+            }
+            #[cfg(feature = "chrono")]
+            FilterValue::Duration(d) => format_duration(f, d),
         }
     }
+}
+
+/// Formats a duration in the same humanized compact form used by duration
+/// literals in the filter language (e.g. `1h30m`), with millisecond precision.
+#[cfg(feature = "chrono")]
+fn format_duration(
+    f: &mut std::fmt::Formatter<'_>,
+    duration: &chrono::Duration,
+) -> std::fmt::Result {
+    let mut remaining_ms = duration.num_milliseconds();
+    if remaining_ms == 0 {
+        return write!(f, "0s");
+    }
+
+    if remaining_ms < 0 {
+        write!(f, "-")?;
+        remaining_ms = remaining_ms.checked_neg().unwrap_or(i64::MAX);
+    }
+
+    for (unit, size_ms) in [
+        ("w", 604_800_000),
+        ("d", 86_400_000),
+        ("h", 3_600_000),
+        ("m", 60_000),
+        ("s", 1_000),
+        ("ms", 1),
+    ] {
+        let count = remaining_ms / size_ms;
+        if count > 0 {
+            write!(f, "{count}{unit}")?;
+            remaining_ms %= size_ms;
+        }
+    }
+
+    Ok(())
 }
 
 impl Debug for FilterValue {
@@ -652,6 +740,61 @@ impl From<secrecy::SecretString> for FilterValue {
     /// ```
     fn from(s: secrecy::SecretString) -> Self {
         FilterValue::Secret(s)
+    }
+}
+
+/// Converts a UTC datetime into a [`FilterValue::DateTime`].
+///
+/// *Only available when the `chrono` crate feature is enabled.*
+///
+/// ```
+/// use filters::FilterValue;
+///
+/// let timestamp = chrono::Utc::now();
+/// let value: FilterValue = timestamp.into();
+/// assert_eq!(value, FilterValue::DateTime(timestamp));
+/// ```
+#[cfg(feature = "chrono")]
+impl From<chrono::DateTime<chrono::Utc>> for FilterValue {
+    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+        FilterValue::DateTime(dt)
+    }
+}
+
+/// Converts a [`chrono::Duration`] into a [`FilterValue::Duration`].
+///
+/// *Only available when the `chrono` crate feature is enabled.*
+///
+/// ```
+/// use filters::FilterValue;
+///
+/// let value: FilterValue = chrono::Duration::minutes(90).into();
+/// assert_eq!(value.to_string(), "1h30m");
+/// ```
+#[cfg(feature = "chrono")]
+impl From<chrono::Duration> for FilterValue {
+    fn from(d: chrono::Duration) -> Self {
+        FilterValue::Duration(d)
+    }
+}
+
+/// Converts a [`std::time::SystemTime`] into a [`FilterValue::DateTime`],
+/// making it easy to expose timestamps from the standard library (such as
+/// file modification times) without converting them yourself.
+///
+/// *Only available when the `chrono` crate feature is enabled.*
+///
+/// ```
+/// use filters::FilterValue;
+/// use std::time::SystemTime;
+///
+/// let value: FilterValue = SystemTime::UNIX_EPOCH.into();
+/// assert_eq!(value.to_string(), "1970-01-01T00:00:00Z");
+/// ```
+#[cfg(feature = "chrono")]
+impl From<std::time::SystemTime> for FilterValue {
+    fn from(t: std::time::SystemTime) -> Self {
+        FilterValue::DateTime(t.into())
     }
 }
 
@@ -1212,6 +1355,133 @@ mod tests {
                 as_string.is_truthy(),
                 "{secret} is_truthy"
             );
+        }
+    }
+
+    #[cfg(feature = "chrono")]
+    mod chrono_tests {
+        use super::*;
+        use chrono::{Duration, TimeZone, Utc};
+
+        fn datetime() -> chrono::DateTime<Utc> {
+            Utc.with_ymd_and_hms(2026, 6, 12, 13, 30, 45).unwrap()
+        }
+
+        #[test]
+        fn test_truthiness() {
+            assert!(FilterValue::DateTime(datetime()).is_truthy());
+            assert!(FilterValue::Duration(Duration::seconds(1)).is_truthy());
+            assert!(FilterValue::Duration(Duration::seconds(-1)).is_truthy());
+            assert!(!FilterValue::Duration(Duration::zero()).is_truthy());
+        }
+
+        #[test]
+        fn test_datetime_comparison() {
+            let earlier = FilterValue::DateTime(datetime());
+            let later = FilterValue::DateTime(datetime() + Duration::minutes(5));
+
+            assert!(earlier < later);
+            assert!(later > earlier);
+            assert!(earlier <= later);
+            assert!(later >= earlier);
+            assert_eq!(earlier, FilterValue::DateTime(datetime()));
+            assert_ne!(earlier, later);
+            assert_eq!(earlier.partial_cmp(&later), Some(Ordering::Less));
+        }
+
+        #[test]
+        fn test_duration_comparison() {
+            let shorter = FilterValue::Duration(Duration::minutes(5));
+            let longer = FilterValue::Duration(Duration::hours(1));
+
+            assert!(shorter < longer);
+            assert!(longer > shorter);
+            assert!(shorter <= longer);
+            assert!(longer >= shorter);
+            assert_eq!(shorter, FilterValue::Duration(Duration::seconds(300)));
+            assert_ne!(shorter, longer);
+            assert_eq!(shorter.partial_cmp(&longer), Some(Ordering::Less));
+        }
+
+        #[rstest]
+        #[case(
+            FilterValue::DateTime(datetime()),
+            FilterValue::Duration(Duration::minutes(5))
+        )]
+        #[case(FilterValue::DateTime(datetime()), FilterValue::Number(1.0))]
+        #[case(
+            FilterValue::Duration(Duration::minutes(5)),
+            FilterValue::Number(300.0)
+        )]
+        #[case(FilterValue::Duration(Duration::minutes(5)), FilterValue::String("5m".into()))]
+        #[case(FilterValue::DateTime(datetime()), FilterValue::Null)]
+        fn test_mismatched_types_are_not_equal_or_ordered(
+            #[case] left: FilterValue,
+            #[case] right: FilterValue,
+        ) {
+            assert_ne!(left, right);
+            assert_eq!(left.partial_cmp(&right), None);
+            assert!(!left.lt(&right));
+            assert!(!left.le(&right));
+            assert!(!left.gt(&right));
+            assert!(!left.ge(&right));
+        }
+
+        #[rstest]
+        #[case(FilterValue::Duration(Duration::zero()), "0s")]
+        #[case(FilterValue::Duration(Duration::milliseconds(500)), "500ms")]
+        #[case(FilterValue::Duration(Duration::seconds(90)), "1m30s")]
+        #[case(FilterValue::Duration(Duration::minutes(90)), "1h30m")]
+        #[case(FilterValue::Duration(Duration::hours(26)), "1d2h")]
+        #[case(FilterValue::Duration(Duration::days(15)), "2w1d")]
+        #[case(
+            FilterValue::Duration(Duration::milliseconds(90_061_001)),
+            "1d1h1m1s1ms"
+        )]
+        #[case(FilterValue::Duration(Duration::minutes(-90)), "-1h30m")]
+        fn test_duration_display(#[case] value: FilterValue, #[case] expected: &str) {
+            assert_eq!(value.to_string(), expected);
+        }
+
+        #[test]
+        fn test_datetime_display_is_rfc3339() {
+            assert_eq!(
+                FilterValue::DateTime(datetime()).to_string(),
+                "2026-06-12T13:30:45Z"
+            );
+        }
+
+        #[test]
+        fn test_conversions() {
+            assert_eq!(
+                FilterValue::from(datetime()),
+                FilterValue::DateTime(datetime())
+            );
+            assert_eq!(
+                FilterValue::from(Duration::minutes(5)),
+                FilterValue::Duration(Duration::minutes(5))
+            );
+            assert_eq!(
+                FilterValue::from(std::time::SystemTime::UNIX_EPOCH),
+                FilterValue::DateTime(Utc.timestamp_opt(0, 0).unwrap())
+            );
+        }
+
+        #[test]
+        fn test_contains_and_friends_are_false_for_temporal_values() {
+            let dt = FilterValue::DateTime(datetime());
+            let d = FilterValue::Duration(Duration::minutes(5));
+
+            assert!(!dt.contains(&d));
+            assert!(!dt.startswith(&d));
+            assert!(!dt.endswith(&d));
+            assert!(!d.contains(&dt));
+            assert!(!d.startswith(&dt));
+            assert!(!d.endswith(&dt));
+
+            // ...though tuples may still contain temporal values.
+            let tuple = FilterValue::Tuple(vec![FilterValue::Duration(Duration::minutes(5))]);
+            assert!(tuple.contains(&d));
         }
     }
 }

@@ -47,6 +47,18 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         Cow::Owned(self.target.get(name))
     }
 
+    fn visit_function_call(&mut self, name: &str, _args: &[Expr]) -> Cow<'e, FilterValue> {
+        match name {
+            // now() is evaluated at filtering time, so each call to
+            // Filter::matches sees the current time.
+            #[cfg(feature = "chrono")]
+            "now" => Cow::Owned(FilterValue::DateTime(chrono::Utc::now())),
+            // Function names and arities are validated when the filter is
+            // parsed, so an unknown function here indicates a parser bug.
+            _ => unreachable!("Encountered a call to an unexpected function '{name}'"),
+        }
+    }
+
     fn visit_binary(
         &mut self,
         left: &'e Expr<'e>,
@@ -62,25 +74,25 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
         // which would derive them from `partial_cmp` instead.
         let left = left.as_ref();
         let right = right.as_ref();
-        let result = match operator {
-            Token::Equals(..) => left == right,
-            Token::NotEquals(..) => left != right,
-            Token::Contains(..) => left.contains(right),
-            Token::ContainsCs(..) => left.contains_cs(right),
-            Token::In(..) => right.contains(left),
-            Token::InCs(..) => right.contains_cs(left),
-            Token::StartsWith(..) => left.startswith(right),
-            Token::StartsWithCs(..) => left.startswith_cs(right),
-            Token::EndsWith(..) => left.endswith(right),
-            Token::EndsWithCs(..) => left.endswith_cs(right),
-            Token::GreaterThan(..) => left.gt(right),
-            Token::SmallerThan(..) => left.lt(right),
-            Token::GreaterEqual(..) => left.ge(right),
-            Token::SmallerEqual(..) => left.le(right),
+        match operator {
+            Token::Equals(..) => wrap_bool(left == right),
+            Token::NotEquals(..) => wrap_bool(left != right),
+            Token::Contains(..) => wrap_bool(left.contains(right)),
+            Token::ContainsCs(..) => wrap_bool(left.contains_cs(right)),
+            Token::In(..) => wrap_bool(right.contains(left)),
+            Token::InCs(..) => wrap_bool(right.contains_cs(left)),
+            Token::StartsWith(..) => wrap_bool(left.startswith(right)),
+            Token::StartsWithCs(..) => wrap_bool(left.startswith_cs(right)),
+            Token::EndsWith(..) => wrap_bool(left.endswith(right)),
+            Token::EndsWithCs(..) => wrap_bool(left.endswith_cs(right)),
+            Token::GreaterThan(..) => wrap_bool(left.gt(right)),
+            Token::SmallerThan(..) => wrap_bool(left.lt(right)),
+            Token::GreaterEqual(..) => wrap_bool(left.ge(right)),
+            Token::SmallerEqual(..) => wrap_bool(left.le(right)),
+            Token::Plus(..) => add(left.to_owned(), right.to_owned()),
+            Token::Minus(..) => subtract(left.to_owned(), right.to_owned()),
             token => unreachable!("Encountered an unexpected binary operator '{token}'"),
-        };
-
-        Cow::Owned(FilterValue::Bool(result))
+        }
     }
 
     fn visit_logical(
@@ -131,6 +143,63 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue>> for FilterContext<
             regex.is_match(s)
         })))
     }
+}
+
+/// Evaluates the `+` operator, returning [`FilterValue::Null`] for operand
+/// combinations which cannot be meaningfully added together.
+fn add<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+    match (left, right) {
+        (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a + b)),
+        #[cfg(feature = "chrono")]
+        (FilterValue::DateTime(a), FilterValue::Duration(b)) => Cow::Owned(
+            a.checked_add_signed(b)
+                .map(FilterValue::DateTime)
+                .unwrap_or(FilterValue::Null),
+        ),
+        #[cfg(feature = "chrono")]
+        (FilterValue::Duration(a), FilterValue::DateTime(b)) => Cow::Owned(
+            b.checked_add_signed(a)
+                .map(FilterValue::DateTime)
+                .unwrap_or(FilterValue::Null),
+        ),
+        #[cfg(feature = "chrono")]
+        (FilterValue::Duration(a), FilterValue::Duration(b)) => Cow::Owned(
+            a.checked_add(&b)
+                .map(FilterValue::Duration)
+                .unwrap_or(FilterValue::Null),
+        ),
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
+/// Evaluates the `-` operator, returning [`FilterValue::Null`] for operand
+/// combinations which cannot be meaningfully subtracted from one another.
+fn subtract<'a>(left: FilterValue, right: FilterValue) -> Cow<'a, FilterValue> {
+    match (left, right) {
+        (FilterValue::Number(a), FilterValue::Number(b)) => Cow::Owned(FilterValue::Number(a - b)),
+        #[cfg(feature = "chrono")]
+        (FilterValue::DateTime(a), FilterValue::Duration(b)) => Cow::Owned(
+            a.checked_sub_signed(b)
+                .map(FilterValue::DateTime)
+                .unwrap_or(FilterValue::Null),
+        ),
+        #[cfg(feature = "chrono")]
+        (FilterValue::DateTime(a), FilterValue::DateTime(b)) => {
+            Cow::Owned(FilterValue::Duration(a.signed_duration_since(b)))
+        }
+        #[cfg(feature = "chrono")]
+        (FilterValue::Duration(a), FilterValue::Duration(b)) => Cow::Owned(
+            a.checked_sub(&b)
+                .map(FilterValue::Duration)
+                .unwrap_or(FilterValue::Null),
+        ),
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
+#[inline]
+fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue> {
+    Cow::Owned(FilterValue::Bool(value))
 }
 
 #[cfg(test)]
@@ -225,6 +294,23 @@ mod tests {
     #[case("1 <= 1", true)]
     #[case("2 <= 1", false)]
     fn smaller(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    #[case("1 + 2 == 3", true)]
+    #[case("1 + 2 + 3 == 6", true)] // chaining is left-associative
+    #[case("5 - 2 == 3", true)]
+    #[case("5 - 2 - 1 == 2", true)]
+    #[case("5 - 2 + 1 == 4", true)]
+    #[case("0 - 5 < 0", true)] // negative values via subtraction
+    #[case("number + 1 == 2", true)]
+    #[case("number + 1 > 1", true)] // arithmetic binds tighter than comparisons
+    #[case("1 + null == null", true)] // mismatched operands evaluate to null
+    #[case("\"a\" + \"b\" == null", true)] // there is no string concatenation
+    #[case("true + true == null", true)]
+    #[case("tuple + tuple == null", true)]
+    fn arithmetic(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
     }
 
@@ -428,5 +514,42 @@ mod tests {
     #[case("string > number", false)]
     fn mismatched_type_comparisons(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[cfg(feature = "chrono")]
+    mod chrono_tests {
+        use super::*;
+
+        #[rstest]
+        // now() is evaluated at filtering time and produces a datetime.
+        #[case("now()", true)]
+        #[case("now() == null", false)]
+        // Datetime arithmetic and comparisons.
+        #[case("now() + 1h > now()", true)]
+        #[case("now() - 1h < now()", true)]
+        #[case("now() - 1h < now() + 1h", true)]
+        #[case("now() - now() < 1s", true)]
+        #[case("now() + 5m - 5m <= now()", true)]
+        // Duration literals, comparisons, and arithmetic.
+        #[case("5m < 1h", true)]
+        #[case("1h > 90s", true)]
+        #[case("60s == 1m", true)]
+        #[case("1h30m == 90m", true)]
+        #[case("30m + 30m == 1h", true)]
+        #[case("1h - 30m == 30m", true)]
+        // Durations are truthy iff they are non-zero.
+        #[case("5m", true)]
+        #[case("0s", false)]
+        #[case("!0s", true)]
+        // Mismatched operand types evaluate to null (and never match).
+        #[case("5m == 300", false)]
+        #[case("now() > 5", false)]
+        #[case("5m + 5 == null", true)]
+        #[case("now() + now() == null", true)]
+        #[case("now() - 5 == null", true)]
+        #[case("5m - now() == null", true)]
+        fn datetime_filters(#[case] filter: &str, #[case] expected: bool) {
+            assert_eq!(TestFilterable::matches(filter), expected);
+        }
     }
 }

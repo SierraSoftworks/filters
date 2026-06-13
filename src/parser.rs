@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use human_errors::{Error, ResultExt};
 
-use super::{FilterValue, expr::Expr, pattern::Glob, token::Token};
+use super::{FilterValue, expr::Expr, location::Loc, pattern::Glob, token::Token};
 
 pub struct Parser<'a, I: Iterator<Item = Result<Token<'a>, Error>>> {
     tokens: Peekable<I>,
@@ -76,7 +76,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
     }
 
     fn comparison(&mut self) -> Result<Expr<'a>, Error> {
-        let mut expr = self.unary()?;
+        let mut expr = self.term()?;
 
         if matches!(
             self.tokens.peek(),
@@ -94,7 +94,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 | Some(Ok(Token::SmallerEqual(..)))
         ) {
             let token = self.tokens.next().unwrap()?;
-            let right = self.unary()?;
+            let right = self.term()?;
             expr = Expr::Binary(Box::new(expr), token, Box::new(right));
         } else if matches!(
             self.tokens.peek(),
@@ -144,6 +144,21 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 )?;
                 expr = Expr::Matches(Box::new(expr), regex);
             }
+        }
+
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr<'a>, Error> {
+        let mut expr = self.unary()?;
+
+        while matches!(
+            self.tokens.peek(),
+            Some(Ok(Token::Plus(..)) | Ok(Token::Minus(..)))
+        ) {
+            let token = self.tokens.next().unwrap()?;
+            let right = self.unary()?;
+            expr = Expr::Binary(Box::new(expr), token, Box::new(right));
         }
 
         Ok(expr)
@@ -237,8 +252,13 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 }
             }
             Some(Ok(Token::Property(..))) => {
-                if let Some(Ok(Token::Property(.., p))) = self.tokens.next() {
-                    Ok(Expr::Property(p))
+                if let Some(Ok(Token::Property(loc, p))) = self.tokens.next() {
+                    if matches!(self.tokens.peek(), Some(Ok(Token::LeftParen(..)))) {
+                        self.tokens.next();
+                        self.function_call(loc, p)
+                    } else {
+                        Ok(Expr::Property(p))
+                    }
                 } else {
                     unreachable!()
                 }
@@ -252,6 +272,140 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 ],
             )),
         }
+    }
+
+    fn function_call(&mut self, loc: Loc, name: &'a str) -> Result<Expr<'a>, Error> {
+        let mut args = Vec::new();
+        if !matches!(self.tokens.peek(), Some(Ok(Token::RightParen(..)))) {
+            loop {
+                args.push(self.or()?);
+                if matches!(self.tokens.peek(), Some(Ok(Token::Comma(..)))) {
+                    self.tokens.next();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        match self.tokens.next() {
+            Some(Ok(Token::RightParen(..))) => {}
+            Some(Err(err)) => return Err(err),
+            _ => {
+                return Err(human_errors::user(
+                    format!(
+                        "When attempting to parse the arguments to the '{name}()' function call at {loc}, we didn't find the closing ')' where we expected to."
+                    ),
+                    &["Make sure that you have closed your function call's parentheses correctly."],
+                ));
+            }
+        }
+
+        Self::check_function(name, loc, args.len())?;
+        Ok(Expr::FunctionCall(name, args))
+    }
+
+    /// Validates a function call at parse time, ensuring that the function is
+    /// known (and usable with the current crate features) and that it has been
+    /// called with the correct number of arguments.
+    fn check_function(name: &str, loc: Loc, arity: usize) -> Result<(), Error> {
+        match name {
+            #[cfg(not(feature = "chrono"))]
+            "now" => {
+                let _ = arity;
+                Err(human_errors::user(
+                    format!(
+                        "Your filter called the 'now()' function at {loc}, but datetime support is not enabled in this build."
+                    ),
+                    &[
+                        "Enable the 'chrono' feature of the filters crate to use datetime functions like 'now()'.",
+                    ],
+                ))
+            }
+            #[cfg(feature = "chrono")]
+            "now" => {
+                if arity != 0 {
+                    Err(human_errors::user(
+                        format!(
+                            "The 'now()' function at {loc} does not accept any arguments, but your filter provided {arity}."
+                        ),
+                        &["Remove the arguments from your 'now()' function call."],
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Err(human_errors::user(
+                format!("Your filter called an unknown function '{name}()' at {loc}."),
+                &[
+                    "Make sure that you are calling one of the functions supported by the filter language: now().",
+                ],
+            )),
+        }
+    }
+
+    /// Converts a duration lexeme such as `5m`, `500ms`, or `1h30m` into a
+    /// [`FilterValue::Duration`]. The lexer has already validated the shape of
+    /// the lexeme, so this only needs to accumulate the segments.
+    #[cfg(feature = "chrono")]
+    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue, Error> {
+        let mut total_ms = 0.0_f64;
+        let mut rest = lexeme;
+
+        while !rest.is_empty() {
+            let number_len = rest.find(|c: char| c.is_alphabetic()).unwrap_or(rest.len());
+            let (number, tail) = rest.split_at(number_len);
+            let unit_len = tail
+                .find(|c: char| !c.is_alphabetic())
+                .unwrap_or(tail.len());
+            let (unit, tail) = tail.split_at(unit_len);
+            rest = tail;
+
+            let value: f64 = number.parse().wrap_user_err(
+                format!(
+                    "Failed to parse the duration '{lexeme}' which you provided at {loc}."
+                ),
+                &["Please make sure that the duration is well formatted. It should be in the form 90s, 1h30m, or 500ms."],
+            )?;
+
+            let scale_ms = match unit {
+                "ms" => 1.0,
+                "s" => 1_000.0,
+                "m" => 60_000.0,
+                "h" => 3_600_000.0,
+                "d" => 86_400_000.0,
+                "w" => 604_800_000.0,
+                _ => {
+                    return Err(human_errors::user(
+                        format!(
+                            "The duration '{lexeme}' at {loc} used the unit '{unit}', which is not a recognized duration unit."
+                        ),
+                        &[
+                            "Use one of the supported duration units: 'ms' (milliseconds), 's' (seconds), 'm' (minutes), 'h' (hours), 'd' (days), or 'w' (weeks).",
+                        ],
+                    ));
+                }
+            };
+
+            total_ms += value * scale_ms;
+        }
+
+        Ok(FilterValue::Duration(chrono::Duration::milliseconds(
+            total_ms.round() as i64,
+        )))
+    }
+
+    /// Without the `chrono` feature there is no duration type to parse into,
+    /// so duration literals are rejected with advice to enable the feature.
+    #[cfg(not(feature = "chrono"))]
+    fn duration_literal(loc: Loc, lexeme: &str) -> Result<FilterValue, Error> {
+        Err(human_errors::user(
+            format!(
+                "Your filter used the duration '{lexeme}' at {loc}, but datetime support is not enabled in this build."
+            ),
+            &[
+                "Enable the 'chrono' feature of the filters crate to use duration literals like '5m' or '1h30m'.",
+            ],
+        ))
     }
 
     fn literal(&mut self) -> Result<FilterValue, Error> {
@@ -270,6 +424,7 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                 s.into()
             }),
             Some(Ok(Token::RawString(.., s))) => Ok(s.into()),
+            Some(Ok(Token::Duration(loc, d))) => Self::duration_literal(loc, d),
             Some(Ok(Token::Null(..))) => Ok(FilterValue::Null),
             Some(Ok(token)) => Err(human_errors::user(
                 format!("While parsing your filter, we found an unexpected '{}' at {}.", token, token.location()),
@@ -556,6 +711,18 @@ mod tests {
         "a == &",
         "Filter included an orphaned '&' at line 1, column 6 which is not a valid operator."
     )]
+    #[case(
+        "nope()",
+        "Your filter called an unknown function 'nope()' at line 1, column 1."
+    )]
+    #[case(
+        "nope(1, true)",
+        "Your filter called an unknown function 'nope()' at line 1, column 1."
+    )]
+    #[case(
+        "now(1",
+        "When attempting to parse the arguments to the 'now()' function call at line 1, column 1, we didn't find the closing ')' where we expected to."
+    )]
     fn invalid_filters(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
         match Parser::parse(tokens.into_iter()) {
@@ -566,6 +733,86 @@ mod tests {
                 message,
                 e
             ),
+        }
+    }
+
+    #[test]
+    fn unknown_function_errors_list_the_supported_functions() {
+        let tokens = crate::lexer::Scanner::new("nope()");
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains("now()"),
+            "Expected the error to list the supported functions, got '{error}'"
+        );
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn now_requires_the_chrono_feature() {
+        let tokens = crate::lexer::Scanner::new("now()");
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains("'chrono' feature"),
+            "Expected the error to mention the 'chrono' feature, got '{error}'"
+        );
+    }
+
+    #[cfg(not(feature = "chrono"))]
+    #[test]
+    fn durations_require_the_chrono_feature() {
+        let tokens = crate::lexer::Scanner::new("5m");
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains("'chrono' feature"),
+            "Expected the error to mention the 'chrono' feature, got '{error}'"
+        );
+    }
+
+    #[cfg(feature = "chrono")]
+    mod chrono_tests {
+        use super::*;
+
+        #[test]
+        fn now_parses_to_a_function_call() {
+            let tokens = crate::lexer::Scanner::new("now()");
+            match Parser::parse(tokens.into_iter()) {
+                Ok(Expr::FunctionCall("now", args)) => assert!(args.is_empty()),
+                Ok(expr) => panic!("Expected a function call, got {:?}", expr),
+                Err(e) => panic!("Error: {}", e),
+            }
+        }
+
+        #[test]
+        fn now_rejects_arguments_at_parse_time() {
+            let tokens = crate::lexer::Scanner::new("now(1)");
+            let error =
+                Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+            assert!(
+                error.to_string().contains(
+                    "The 'now()' function at line 1, column 1 does not accept any arguments, but your filter provided 1."
+                ),
+                "Expected an arity error, got '{error}'"
+            );
+        }
+
+        #[rstest]
+        #[case("500ms", chrono::Duration::milliseconds(500))]
+        #[case("90s", chrono::Duration::seconds(90))]
+        #[case("5m", chrono::Duration::minutes(5))]
+        #[case("2h", chrono::Duration::hours(2))]
+        #[case("7d", chrono::Duration::days(7))]
+        #[case("1w", chrono::Duration::weeks(1))]
+        #[case("1h30m", chrono::Duration::minutes(90))]
+        #[case("1w2d3h4m5s6ms", chrono::Duration::milliseconds(788_645_006))]
+        #[case("1.5h", chrono::Duration::minutes(90))]
+        #[case("0s", chrono::Duration::zero())]
+        fn duration_literals(#[case] input: &str, #[case] expected: chrono::Duration) {
+            let tokens = crate::lexer::Scanner::new(input);
+            match Parser::parse(tokens.into_iter()) {
+                Ok(Expr::Literal(FilterValue::Duration(d))) => assert_eq!(d, expected),
+                Ok(expr) => panic!("Expected a duration literal, got {:?}", expr),
+                Err(e) => panic!("Error: {}", e),
+            }
         }
     }
 }

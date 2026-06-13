@@ -18,6 +18,7 @@ pub enum Token<'a> {
     String(Loc, &'a str),
     RawString(Loc, &'a str),
     Number(Loc, &'a str),
+    Duration(Loc, &'a str),
 
     Equals(Loc),
     NotEquals(Loc),
@@ -36,6 +37,9 @@ pub enum Token<'a> {
     SmallerThan(Loc),
     GreaterEqual(Loc),
     SmallerEqual(Loc),
+
+    Plus(Loc),
+    Minus(Loc),
 
     Not(Loc),
     And(Loc),
@@ -59,6 +63,7 @@ impl Token<'_> {
             Token::String(.., s) => s,
             Token::RawString(.., s) => s,
             Token::Number(.., s) => s,
+            Token::Duration(.., s) => s,
 
             Token::Equals(..) => "==",
             Token::NotEquals(..) => "!=",
@@ -77,6 +82,9 @@ impl Token<'_> {
             Token::GreaterEqual(..) => ">=",
             Token::SmallerThan(..) => "<",
             Token::SmallerEqual(..) => "<=",
+
+            Token::Plus(..) => "+",
+            Token::Minus(..) => "-",
 
             Token::Not(..) => "!",
             Token::And(..) => "&&",
@@ -100,6 +108,7 @@ impl Token<'_> {
             Token::String(loc, ..) => *loc,
             Token::RawString(loc, ..) => *loc,
             Token::Number(loc, ..) => *loc,
+            Token::Duration(loc, ..) => *loc,
 
             Token::Equals(loc) => *loc,
             Token::NotEquals(loc) => *loc,
@@ -118,6 +127,9 @@ impl Token<'_> {
             Token::SmallerThan(loc) => *loc,
             Token::GreaterEqual(loc) => *loc,
             Token::SmallerEqual(loc) => *loc,
+
+            Token::Plus(loc) => *loc,
+            Token::Minus(loc) => *loc,
 
             Token::Not(loc) => *loc,
             Token::And(loc) => *loc,
@@ -157,6 +169,7 @@ mod tests {
     #[case(Token::String(LOC, "hello"), "hello")]
     #[case(Token::RawString(LOC, "he\\llo"), "he\\llo")]
     #[case(Token::Number(LOC, "1.5"), "1.5")]
+    #[case(Token::Duration(LOC, "1h30m"), "1h30m")]
     #[case(Token::Equals(LOC), "==")]
     #[case(Token::NotEquals(LOC), "!=")]
     #[case(Token::Contains(LOC), "contains")]
@@ -174,6 +187,8 @@ mod tests {
     #[case(Token::GreaterEqual(LOC), ">=")]
     #[case(Token::SmallerThan(LOC), "<")]
     #[case(Token::SmallerEqual(LOC), "<=")]
+    #[case(Token::Plus(LOC), "+")]
+    #[case(Token::Minus(LOC), "-")]
     #[case(Token::Not(LOC), "!")]
     #[case(Token::And(LOC), "&&")]
     #[case(Token::Or(LOC), "||")]

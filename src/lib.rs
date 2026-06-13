@@ -67,6 +67,7 @@
 //! | String     | `"hello"`              | Escape embedded quotes with `\"`.                |
 //! | Raw string | `r"^v\d+$"`            | No escape processing; cannot contain `"` (the `r#"..."#` form is not supported). |
 //! | Tuple      | `["a", "b"]`           | A list of literal values.                        |
+//! | Duration   | `5m`, `1h30m`, `500ms` | Requires the **`chrono`** crate feature.         |
 //!
 //! ## Properties
 //!
@@ -91,6 +92,7 @@
 //! | `startswith`, `endswith` | String prefix/suffix tests (case-insensitive).                     |
 //! | `like`                   | Case-insensitive glob match (`*` and `?` wildcards).               |
 //! | `matches`                | Regular expression match (requires the **`regex`** crate feature). |
+//! | `+`, `-`                 | Addition and subtraction (numbers, datetimes, and durations).      |
 //! | `!`                      | Logical NOT (unary).                                               |
 //! | `(...)`                  | Grouping.                                                          |
 //!
@@ -184,12 +186,85 @@
 //! match when any of their string elements match, while `null`, booleans, and
 //! numbers never match — even against `like "*"`.
 //!
+//! ## Arithmetic
+//!
+//! The `+` and `-` operators bind tighter than comparisons, so
+//! `a + b > c` is read as `(a + b) > c`. Numbers may be added to and
+//! subtracted from one another, while any unsupported combination of operand
+//! types evaluates to `null` (consistent with the language's lenient
+//! comparison semantics). There is no unary minus: write `0 - 5` to produce a
+//! negative value.
+//!
+//! ```
+//! # use filters::Filter;
+//! # struct Nothing;
+//! # impl filters::Filterable for Nothing {
+//! #     fn get(&self, _key: &str) -> filters::FilterValue { filters::FilterValue::Null }
+//! # }
+//! # fn main() -> Result<(), filters::Error> {
+//! let filter = Filter::new("1 + 2 - 4 < 0")?;
+//! assert!(filter.matches(&Nothing)?);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Note that a `-` *inside* a property name remains part of that name (so
+//! `asset.source-code` is a single property), while a `-` which starts a new
+//! token is the subtraction operator: `asset.size - 5` subtracts, but
+//! `asset.size-5` references a property named `asset.size-5`.
+//!
+//! ## Functions
+//!
+//! Filters may call built-in functions using the familiar `name(args...)`
+//! syntax. Function names and argument counts are validated when the filter
+//! is parsed, so typos fail fast with a friendly error rather than at
+//! evaluation time.
+//!
+//! | Function | Result                                                                            |
+//! |----------|-----------------------------------------------------------------------------------|
+//! | `now()`  | The current UTC time, evaluated at each [`Filter::matches`] call. Requires **`chrono`**. |
+//!
+//! ## Datetimes and durations
+//!
+//! With the **`chrono`** crate feature enabled, filters can work with points
+//! in time and spans of time:
+//!
+//! - Duration literals are written as a number immediately followed by a
+//!   unit — `ms` (milliseconds), `s` (seconds), `m` (minutes), `h` (hours),
+//!   `d` (days), or `w` (weeks) — and may chain several segments together:
+//!   `90s`, `5m`, `1h30m`, `500ms`.
+//! - [`Filterable::get`] implementations can return
+//!   [`FilterValue::DateTime`](FilterValue) values (e.g. from
+//!   [`chrono::DateTime<Utc>`](https://docs.rs/chrono/latest/chrono/struct.DateTime.html)
+//!   or [`std::time::SystemTime`]).
+//! - Datetimes and durations support ordering comparisons against values of
+//!   the same type, and arithmetic via `+` and `-`:
+//!   `DateTime ± Duration → DateTime`, `DateTime - DateTime → Duration`, and
+//!   `Duration ± Duration → Duration`.
+//! - Datetimes are always truthy, while durations are truthy if (and only
+//!   if) they are non-zero.
+//!
+//! This makes relative-time filters pleasantly concise:
+//!
+//! ```text
+//! event.timestamp > now() - 5m
+//! ```
+//!
+//! Without the `chrono` feature, duration literals and `now()` are still
+//! recognised by the parser but produce a friendly error explaining that the
+//! feature must be enabled.
+//!
 //! # Crate features
 //!
 //! - **`regex`** — enables the `matches` regular expression operator (adds a
 //!   dependency on the [regex](https://docs.rs/regex) crate). Without this
 //!   feature, filters using `matches` fail to parse with an error explaining
 //!   how to enable it.
+//! - **`chrono`** — adds datetime and duration support: the
+//!   [`FilterValue::DateTime`](FilterValue) and
+//!   [`FilterValue::Duration`](FilterValue) variants, duration literals such
+//!   as `5m` and `1h30m`, the `now()` function, and temporal arithmetic and
+//!   comparisons (see [Datetimes and durations](#datetimes-and-durations)).
 //!
 //! - **`secrecy`** — adds a `FilterValue::Secret` variant backed by the
 //!   [`secrecy`](https://docs.rs/secrecy) crate's `SecretString`. Secret values

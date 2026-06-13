@@ -43,6 +43,8 @@ it powers their backup policy filtering.
 - **Bring your own objects** — implement the single-method `Filterable` trait;
   no derives, reflection, or serialization required.
 - **Lightweight** — a single small dependency, no async, no unsafe API surface.
+- **Optional datetime support** — filter on timestamps with relative-time
+  expressions like `event.timestamp > now() - 5m` using the `chrono` feature.
 - **Optional serde support** — deserialize filters directly out of your
   configuration files with the `serde` feature.
 - **Optional secret values** — compare passwords and tokens in filters without
@@ -97,14 +99,15 @@ matching whenever the expression evaluates to a truthy value (`null`, `false`,
 
 ### Literals
 
-| Literal    | Example         | Notes                                            |
-| ---------- | --------------- | ------------------------------------------------ |
-| Null       | `null`          | Also returned for properties which aren't found. |
-| Boolean    | `true`, `false` |                                                  |
-| Number     | `123`, `123.45` | All numbers are 64-bit floats internally.        |
-| String     | `"hello"`       | Escape embedded quotes with `\"`.                |
-| Raw string | `r"^v\d+$"`     | No escape processing; cannot contain `"`.        |
-| Tuple      | `["a", "b"]`    | A list of literal values.                        |
+| Literal    | Example                | Notes                                            |
+| ---------- | ---------------------- | ------------------------------------------------ |
+| Null       | `null`                 | Also returned for properties which aren't found. |
+| Boolean    | `true`, `false`        |                                                  |
+| Number     | `123`, `123.45`        | All numbers are 64-bit floats internally.        |
+| String     | `"hello"`              | Escape embedded quotes with `\"`.                |
+| Raw string | `r"^v\d+$"`            | No escape processing; cannot contain `"`.        |
+| Tuple      | `["a", "b"]`           | A list of literal values.                        |
+| Duration   | `5m`, `1h30m`, `500ms` | Requires the `chrono` feature.                   |
 
 ### Properties
 
@@ -119,19 +122,36 @@ property names.
 
 In order of increasing precedence:
 
-| Operator                 | Meaning                                                 |
-| ------------------------ | ------------------------------------------------------- |
-| `\|\|`                   | Logical OR (short-circuiting).                          |
-| `&&`                     | Logical AND (short-circuiting).                         |
-| `==`, `!=`               | Equality (strings are compared case-insensitively).     |
-| `>`, `>=`, `<`, `<=`     | Ordering comparisons.                                   |
-| `contains`               | String contains a substring, or tuple contains a value. |
-| `in`                     | Inverse of `contains` (`a in b` ≡ `b contains a`).      |
-| `startswith`, `endswith` | String prefix/suffix tests (case-insensitive).          |
-| `like`                   | Case-insensitive glob match (`*` and `?` wildcards).    |
-| `matches`                | Regular expression match (requires the `regex` feature). |
-| `!`                      | Logical NOT (unary).                                    |
-| `(...)`                  | Grouping.                                               |
+| Operator                 | Meaning                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `\|\|`                   | Logical OR (short-circuiting).                                |
+| `&&`                     | Logical AND (short-circuiting).                               |
+| `==`, `!=`               | Equality (strings are compared case-insensitively).           |
+| `>`, `>=`, `<`, `<=`     | Ordering comparisons.                                         |
+| `contains`               | String contains a substring, or tuple contains a value.       |
+| `in`                     | Inverse of `contains` (`a in b` ≡ `b contains a`).            |
+| `startswith`, `endswith` | String prefix/suffix tests (case-insensitive).                |
+| `like`                   | Case-insensitive glob match (`*` and `?` wildcards).          |
+| `matches`                | Regular expression match (requires the `regex` feature).      |
+| `+`, `-`                 | Addition and subtraction (numbers, datetimes, and durations). |
+| `!`                      | Logical NOT (unary).                                          |
+| `(...)`                  | Grouping.                                                     |
+
+Arithmetic binds tighter than comparisons (so `a + b > c` reads as
+`(a + b) > c`), and unsupported operand combinations evaluate to `null` rather
+than failing. There is no unary minus — write `0 - 5` for a negative value —
+and a `-` *inside* a property name remains part of that name, so
+`asset.source-code` keeps working as a single property.
+
+### Functions
+
+Filters may call built-in functions using the familiar `name(args...)` syntax.
+Unknown function names and incorrect argument counts are rejected when the
+filter is parsed, with an error listing the supported functions.
+
+| Function | Result                                                                   |
+| -------- | ------------------------------------------------------------------------ |
+| `now()`  | The current UTC time, evaluated afresh on every `Filter::matches` call. Requires the `chrono` feature. |
 
 ### Case sensitivity
 
@@ -196,7 +216,47 @@ size > 1024 && (archived || disabled)
 "backup" in tags
 branch.name like "feat/*"
 branch.name matches r"^release/v\d+(\.\d+){2}$"
+event.timestamp > now() - 5m
 ```
+
+## Datetime support
+
+Enable the `chrono` feature to filter on timestamps with relative-time
+expressions:
+
+```shell
+cargo add filters --features chrono
+```
+
+Expose a `FilterValue::DateTime` from your `Filterable` implementation (any
+`chrono::DateTime<Utc>` or `std::time::SystemTime` converts with `.into()`),
+and your users can write filters like `event.timestamp > now() - 5m`:
+
+```rust,ignore
+use filters::{Filter, FilterValue, Filterable};
+
+struct Event {
+    timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+impl Filterable for Event {
+    fn get(&self, key: &str) -> FilterValue {
+        match key {
+            "event.timestamp" => self.timestamp.into(),
+            _ => FilterValue::Null,
+        }
+    }
+}
+
+let filter = Filter::new("event.timestamp > now() - 5m")?;
+assert!(filter.matches(&Event { timestamp: chrono::Utc::now() })?);
+```
+
+Durations are written as a number immediately followed by a unit — `ms`, `s`,
+`m` (minutes), `h`, `d`, or `w` — and several segments can be chained together
+(`1h30m`). Datetimes and durations compare against values of the same type and
+support `+`/`-` arithmetic: `DateTime ± Duration → DateTime`,
+`DateTime - DateTime → Duration`, and `Duration ± Duration → Duration`.
 
 ## Serde support
 

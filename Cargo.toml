@@ -15,6 +15,7 @@ categories = ["parser-implementations"]
 exclude = [".github/", "assets/"]
 
 [dependencies]
+chrono = { version = "0.4", optional = true, default-features = false, features = ["clock", "std"] }
 human-errors = "0.2.3"
 regex = { version = "1.11", optional = true }
 secrecy = { version = "0.10", optional = true }
@@ -30,6 +31,11 @@ regex = ["dep:regex"]
 ## which behave like normal strings in comparisons but are always redacted when formatted.
 secrecy = ["dep:secrecy"]
 
+## Enables datetime and duration support within filters, including duration
+## literals (e.g. `5m`, `1h30m`), the `now()` function, and datetime/duration
+## arithmetic and comparisons.
+chrono = ["dep:chrono"]
+
 ## Enables deserializing a [`Filter`] directly from configuration files using serde.
 serde = ["dep:serde"]
 
@@ -43,6 +49,7 @@ harness = false
 [dev-dependencies]
 criterion = "0.8"
 regex = "1.11"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rstest = "0.26.1"
 secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
