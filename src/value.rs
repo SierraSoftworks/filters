@@ -161,6 +161,55 @@ impl<'a> FilterValue<'a> {
         FilterValue::Secret(secrecy::SecretString::from(value.into()))
     }
 
+    /// Converts this value into an owned [`FilterValue<'static>`], cloning any
+    /// borrowed string data so the result no longer borrows from its source.
+    ///
+    /// A [`FilterValue<'a>`](FilterValue) may borrow its string data straight
+    /// out of the object being filtered (see [`Filterable::get`]). That keeps
+    /// evaluation allocation-free, but it also ties the value's lifetime to the
+    /// borrowed object. When you need to store or return a value beyond that
+    /// borrow — for instance to hand it back from a function or stash it in a
+    /// longer-lived collection — `into_owned` promotes it to `'static` by taking
+    /// ownership of the underlying data.
+    ///
+    /// This is the [`FilterValue`] analogue of [`Cow::into_owned`]: variants
+    /// that never borrow ([`Null`](FilterValue::Null),
+    /// [`Bool`](FilterValue::Bool), [`Number`](FilterValue::Number), and the
+    /// feature-gated variants) are returned unchanged, owned
+    /// [`String`](FilterValue::String) data is reused without reallocating, and
+    /// [`Tuple`](FilterValue::Tuple) elements are converted recursively.
+    ///
+    /// ```
+    /// use filt_rs::FilterValue;
+    ///
+    /// fn borrow() -> FilterValue<'static> {
+    ///     let owned = String::from("hello");
+    ///     // `value` borrows from `owned`, so it cannot outlive this scope...
+    ///     let value: FilterValue<'_> = owned.as_str().into();
+    ///     // ...until we take ownership of its data.
+    ///     value.into_owned()
+    /// }
+    ///
+    /// assert_eq!(borrow(), FilterValue::String("hello".into()));
+    /// ```
+    pub fn into_owned(self) -> FilterValue<'static> {
+        match self {
+            FilterValue::Null => FilterValue::Null,
+            FilterValue::Bool(b) => FilterValue::Bool(b),
+            FilterValue::Number(n) => FilterValue::Number(n),
+            FilterValue::String(s) => FilterValue::String(Cow::Owned(s.into_owned())),
+            FilterValue::Tuple(v) => {
+                FilterValue::Tuple(v.into_iter().map(FilterValue::into_owned).collect())
+            }
+            #[cfg(feature = "secrecy")]
+            FilterValue::Secret(s) => FilterValue::Secret(s),
+            #[cfg(feature = "chrono")]
+            FilterValue::DateTime(d) => FilterValue::DateTime(d),
+            #[cfg(feature = "chrono")]
+            FilterValue::Duration(d) => FilterValue::Duration(d),
+        }
+    }
+
     /// Determines whether this value is considered "truthy" by the filter language.
     ///
     /// Filters match an object when their expression evaluates to a truthy
@@ -844,6 +893,35 @@ mod tests {
     #[case(FilterValue::Tuple(vec![FilterValue::Bool(true)]), true)]
     fn test_truthy(#[case] value: FilterValue<'_>, #[case] truthy: bool) {
         assert_eq!(value.is_truthy(), truthy);
+    }
+
+    /// `into_owned` must promote a value to `'static` while preserving equality,
+    /// regardless of which variant (or nested variant) carried borrowed data.
+    #[rstest]
+    #[case(FilterValue::Null)]
+    #[case(FilterValue::Bool(true))]
+    #[case(FilterValue::Number(42.0))]
+    #[case(FilterValue::String("hello".into()))]
+    #[case(FilterValue::Tuple(vec![
+        FilterValue::String("a".into()),
+        FilterValue::Tuple(vec![FilterValue::String("b".into())]),
+    ]))]
+    fn test_into_owned(#[case] value: FilterValue<'_>) {
+        let owned: FilterValue<'static> = value.clone().into_owned();
+        assert_eq!(owned, value);
+    }
+
+    /// The borrowed source can be dropped after `into_owned`, proving the result
+    /// owns its data rather than borrowing it.
+    #[test]
+    fn test_into_owned_outlives_source() {
+        let owned = {
+            let source = String::from("borrowed");
+            let value: FilterValue<'_> = source.as_str().into();
+            value.into_owned()
+        };
+
+        assert_eq!(owned, FilterValue::String("borrowed".into()));
     }
 
     #[test]
