@@ -15,7 +15,8 @@
 use std::collections::BTreeSet;
 
 use filt_rs::{
-    BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Glob, LogicalOperator, UnaryOperator,
+    BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Function, Glob, LogicalOperator,
+    UnaryOperator,
 };
 
 /// An [`ExprVisitor`] which accumulates the names of all accessed properties.
@@ -37,7 +38,7 @@ impl<'a> ExprVisitor<'a, ()> for PropertyCollector<'a> {
         self.properties.insert(name);
     }
 
-    fn visit_function_call(&mut self, _name: &'a str, args: &'a [Expr<'a>]) {
+    fn visit_function_call(&mut self, _function: &'a dyn Function, args: &'a [Expr<'a>]) {
         // A property may be passed as a function argument, so recurse into each.
         for arg in args {
             self.visit_expr(arg);

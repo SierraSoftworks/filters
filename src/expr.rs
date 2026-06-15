@@ -1,9 +1,11 @@
 use std::fmt::{Debug, Display};
+use std::sync::Arc;
 
 #[cfg(feature = "regex")]
 use super::pattern::CompiledRegex;
 use super::{
     FilterValue,
+    functions::Function,
     operator::{BinaryOperator, LogicalOperator, UnaryOperator},
     pattern::Glob,
 };
@@ -17,21 +19,22 @@ use super::{
 /// example to extract the set of properties a filter references, or to
 /// translate a filter into another query language.
 ///
-/// The `'a` lifetime ties borrowed lexemes (property names, function names,
-/// and string literals) to the original filter expression text.
+/// The `'a` lifetime ties borrowed lexemes (property names and string literals)
+/// to the original filter expression text.
 // WARNING: We cannot have clone/copy semantics here because the [`Filter`] relies on
 // pinning pointers to ensure that this struct can be safely used without additional
 // allocations.
-#[derive(PartialEq)]
 pub enum Expr<'a> {
     /// A literal value such as `42`, `"text"`, `true`, or `["a", "b"]`.
     Literal(FilterValue<'a>),
     /// A reference to a property (e.g. `repo.name`), resolved at evaluation
     /// time via [`Filterable::get`](crate::Filterable::get).
     Property(&'a str),
-    /// A call to a built-in function, carrying the function name and the
-    /// argument expressions passed to it.
-    FunctionCall(&'a str, Vec<Expr<'a>>),
+    /// A call to a function, carrying a shared handle to the resolved
+    /// [`Function`] implementation and the argument expressions passed to it.
+    /// The function is looked up (and its arity validated) when the filter is
+    /// parsed, so evaluation can dispatch straight to it.
+    FunctionCall(Arc<dyn Function>, Vec<Expr<'a>>),
     /// A binary operation — comparison, membership, or arithmetic — joining two
     /// operands with the [`BinaryOperator`] between them.
     Binary(Box<Expr<'a>>, BinaryOperator, Box<Expr<'a>>),
@@ -47,6 +50,32 @@ pub enum Expr<'a> {
     /// A `matches` regular-expression match against the left-hand operand.
     #[cfg(feature = "regex")]
     Matches(Box<Expr<'a>>, CompiledRegex),
+}
+
+// `Expr` cannot derive `PartialEq` because `Arc<dyn Function>` is not itself
+// `PartialEq`; we treat two function calls as equal when they invoke the same
+// function (compared by name) with equal arguments.
+impl PartialEq for Expr<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Expr::Literal(a), Expr::Literal(b)) => a == b,
+            (Expr::Property(a), Expr::Property(b)) => a == b,
+            (Expr::FunctionCall(fa, aa), Expr::FunctionCall(fb, ab)) => {
+                fa.name() == fb.name() && aa == ab
+            }
+            (Expr::Binary(la, oa, ra), Expr::Binary(lb, ob, rb)) => {
+                oa == ob && la == lb && ra == rb
+            }
+            (Expr::Logical(la, oa, ra), Expr::Logical(lb, ob, rb)) => {
+                oa == ob && la == lb && ra == rb
+            }
+            (Expr::Unary(oa, ra), Expr::Unary(ob, rb)) => oa == ob && ra == rb,
+            (Expr::Like(la, ga), Expr::Like(lb, gb)) => la == lb && ga == gb,
+            #[cfg(feature = "regex")]
+            (Expr::Matches(la, ra), Expr::Matches(lb, rb)) => la == lb && ra == rb,
+            _ => false,
+        }
+    }
 }
 
 /// A visitor over [`Expr`] trees.
@@ -78,7 +107,7 @@ pub trait ExprVisitor<'a, T> {
         match expr {
             Expr::Literal(value) => self.visit_literal(value),
             Expr::Property(name) => self.visit_property(name),
-            Expr::FunctionCall(name, args) => self.visit_function_call(name, args),
+            Expr::FunctionCall(function, args) => self.visit_function_call(function.as_ref(), args),
             Expr::Binary(left, operator, right) => self.visit_binary(left, *operator, right),
             Expr::Logical(left, operator, right) => self.visit_logical(left, *operator, right),
             Expr::Unary(operator, right) => self.visit_unary(*operator, right),
@@ -92,9 +121,10 @@ pub trait ExprVisitor<'a, T> {
     fn visit_literal(&mut self, value: &'a FilterValue<'a>) -> T;
     /// Visits a property reference node, carrying the property's name.
     fn visit_property(&mut self, name: &'a str) -> T;
-    /// Visits a function-call node, carrying the function name and its argument
-    /// expressions (recurse into the arguments with [`visit_expr`](ExprVisitor::visit_expr)).
-    fn visit_function_call(&mut self, name: &'a str, args: &'a [Expr<'a>]) -> T;
+    /// Visits a function-call node, carrying the resolved [`Function`] and its
+    /// argument expressions (recurse into the arguments with
+    /// [`visit_expr`](ExprVisitor::visit_expr)).
+    fn visit_function_call(&mut self, function: &'a dyn Function, args: &'a [Expr<'a>]) -> T;
     /// Visits a binary operation node — comparison, membership, or arithmetic.
     fn visit_binary(
         &mut self,
@@ -144,8 +174,12 @@ impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
         write!(self.0, "(property {})", name)
     }
 
-    fn visit_function_call(&mut self, name: &'e str, args: &'e [Expr<'e>]) -> std::fmt::Result {
-        write!(self.0, "(call {}", name)?;
+    fn visit_function_call(
+        &mut self,
+        function: &'e dyn Function,
+        args: &'e [Expr<'e>],
+    ) -> std::fmt::Result {
+        write!(self.0, "(call {}", function.name())?;
         for arg in args {
             write!(self.0, " ")?;
             self.visit_expr(arg)?;
@@ -205,9 +239,12 @@ impl<'e> ExprVisitor<'e, std::fmt::Result> for ExprPrinter<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use rstest::rstest;
 
     use super::*;
+    use crate::functions::Trim;
 
     #[rstest]
     #[case(Expr::Literal("value".into()), "\"value\"")]
@@ -240,13 +277,13 @@ mod tests {
         Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile_cs("feat/*"),),
         "(like_cs (property branch.name) \"feat/*\")"
     )]
-    #[case(Expr::FunctionCall("now", vec![]), "(call now)")]
+    #[case(Expr::FunctionCall(Arc::new(Trim), vec![]), "(call trim)")]
     #[case(
-        Expr::FunctionCall("now", vec![Expr::Literal(1.into()), Expr::Property("test")]),
-        "(call now 1 (property test))"
+        Expr::FunctionCall(Arc::new(Trim), vec![Expr::Literal(1.into()), Expr::Property("test")]),
+        "(call trim 1 (property test))"
     )]
     #[case(
-        Expr::FunctionCall("trim", vec![Expr::Property("name")]),
+        Expr::FunctionCall(Arc::new(Trim), vec![Expr::Property("name")]),
         "(call trim (property name))"
     )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {

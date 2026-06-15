@@ -454,12 +454,15 @@ mod functions {
             error.contains("unknown function 'nope()'"),
             "expected an unknown-function error, got: {error}"
         );
+        // The error lists the available functions; `now()` is only among them
+        // when the chrono feature registers it.
+        #[cfg(feature = "chrono")]
         assert!(
             error.contains("now()"),
             "expected the error to list the supported functions, got: {error}"
         );
         assert!(
-            error.contains("trim"),
+            error.contains("trim()"),
             "expected the error to list the supported functions, got: {error}"
         );
     }
@@ -501,10 +504,10 @@ mod functions {
 
     #[test]
     fn trim_requires_exactly_one_argument() {
-        assert!(parse_error("trim()").contains("expects exactly one string argument"));
+        assert!(parse_error("trim()").contains("expects 1 argument, but your filter provided 0"));
         assert!(
             parse_error("trim(doc.title, doc.pages)")
-                .contains("expects exactly one string argument")
+                .contains("expects 1 argument, but your filter provided 2")
         );
     }
 }
@@ -595,7 +598,7 @@ mod datetimes {
 
     #[test]
     fn now_rejects_arguments_at_parse_time() {
-        assert!(parse_error("now(1)").contains("does not accept any arguments"));
+        assert!(parse_error("now(1)").contains("expects 0 arguments, but your filter provided 1"));
     }
 }
 

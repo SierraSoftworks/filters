@@ -1,17 +1,26 @@
 use std::iter::Peekable;
+use std::sync::Arc;
 
 use human_errors::{Error, ResultExt};
 
-use super::{FilterValue, expr::Expr, location::Loc, pattern::Glob, token::Token};
+use super::{
+    FilterValue, expr::Expr, functions::Function, location::Loc, pattern::Glob, token::Token,
+};
 
-pub struct Parser<'a, I: Iterator<Item = Result<Token<'a>, Error>>> {
+pub struct Parser<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> {
     tokens: Peekable<I>,
+    /// The functions which may be called from the expression. Function calls are
+    /// resolved against (and validated by) this set at parse time; the matched
+    /// [`Function`] is cloned into the resulting [`Expr::FunctionCall`] node so
+    /// evaluation can dispatch straight to it.
+    functions: &'f [Arc<dyn Function>],
 }
 
-impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
-    pub fn parse(tokens: I) -> Result<Expr<'a>, Error> {
+impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
+    pub fn parse(tokens: I, functions: &'f [Arc<dyn Function>]) -> Result<Expr<'a>, Error> {
         let mut parser = Parser {
             tokens: tokens.peekable(),
+            functions,
         };
 
         let expr = parser.or()?;
@@ -300,60 +309,17 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
             }
         }
 
-        Self::check_function(name, loc, args.len())?;
-        Ok(Expr::FunctionCall(name, args))
-    }
-
-    /// Validates a function call at parse time, ensuring that the function is
-    /// known (and usable with the current crate features) and that it has been
-    /// called with the correct number of arguments.
-    fn check_function(name: &str, loc: Loc, arity: usize) -> Result<(), Error> {
-        match name {
-            #[cfg(not(feature = "chrono"))]
-            "now" => {
-                let _ = arity;
-                Err(human_errors::user(
-                    format!(
-                        "Your filter called the 'now()' function at {loc}, but datetime support is not enabled in this build."
-                    ),
-                    &[
-                        "Enable the 'chrono' feature of the filt-rs crate to use datetime functions like 'now()'.",
-                    ],
-                ))
+        // Resolve the call against the registered functions, validating its
+        // arity at parse time so a bad call fails fast with a friendly error.
+        // The matched function is cloned (a cheap reference-count bump) into the
+        // AST so evaluation can dispatch straight to it.
+        let functions = self.functions;
+        match functions.iter().find(|function| function.name() == name) {
+            Some(function) if function.arity() == args.len() => {
+                Ok(Expr::FunctionCall(Arc::clone(function), args))
             }
-            #[cfg(feature = "chrono")]
-            "now" => {
-                if arity != 0 {
-                    Err(human_errors::user(
-                        format!(
-                            "The 'now()' function at {loc} does not accept any arguments, but your filter provided {arity}."
-                        ),
-                        &["Remove the arguments from your 'now()' function call."],
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            "trim" => {
-                if arity != 1 {
-                    Err(human_errors::user(
-                        format!(
-                            "The 'trim()' function at {loc} expects exactly one string argument, but your filter provided {arity}."
-                        ),
-                        &[
-                            "Call 'trim()' with a single string argument, for example trim(repo.name).",
-                        ],
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            _ => Err(human_errors::user(
-                format!("Your filter called an unknown function '{name}()' at {loc}."),
-                &[
-                    "Make sure that you are calling one of the functions supported by the filter language: now(), trim(string).",
-                ],
-            )),
+            Some(function) => Err(arity_error(name, loc, function.arity(), args.len())),
+            None => Err(unknown_function(name, loc, functions)),
         }
     }
 
@@ -453,12 +419,60 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
     }
 }
 
+/// Builds the parse-time error for a function call with the wrong number of
+/// arguments.
+fn arity_error(name: &str, loc: Loc, expected: usize, actual: usize) -> Error {
+    let plural = if expected == 1 { "" } else { "s" };
+    // The advice must be `'static`, so all the specifics go in the message.
+    human_errors::user(
+        format!(
+            "The '{name}()' function at {loc} expects {expected} argument{plural}, but your filter provided {actual}."
+        ),
+        &["Adjust the call so that it passes the number of arguments the function expects."],
+    )
+}
+
+/// Builds the parse-time error for a call to a function which is not registered,
+/// listing the functions which *are* available so the writer can correct it.
+fn unknown_function(name: &str, loc: Loc, functions: &[Arc<dyn Function>]) -> Error {
+    // Without the `chrono` feature, `now()` is not registered. Keep the tailored
+    // hint the crate documents rather than treating it as a plain typo.
+    #[cfg(not(feature = "chrono"))]
+    if name == "now" {
+        return human_errors::user(
+            format!(
+                "Your filter called the 'now()' function at {loc}, but datetime support is not enabled in this build."
+            ),
+            &[
+                "Enable the 'chrono' feature of the filt-rs crate to use datetime functions like 'now()'.",
+            ],
+        );
+    }
+
+    // The available list is dynamic, so it goes in the message (the advice has
+    // to be `'static`).
+    let available = functions
+        .iter()
+        .map(|function| format!("{}()", function.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    human_errors::user(
+        format!(
+            "Your filter called an unknown function '{name}()' at {loc}. The functions available in this filter are: {available}."
+        ),
+        &[
+            "Make sure you are calling one of the supported functions, or register your own with Filter::with_functions.",
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use crate::{
         FilterValue,
+        functions::base_functions,
         operator::{BinaryOperator, LogicalOperator, UnaryOperator},
     };
 
@@ -477,7 +491,7 @@ mod tests {
     #[case("[true, false, \"test\", 123, null]", FilterValue::Tuple(vec![true.into(), false.into(), "test".into(), 123.into(), FilterValue::Null]))]
     fn parsing_literals(#[case] input: &str, #[case] value: FilterValue<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(Expr::Literal(ast)) => assert_eq!(value, ast, "Expected {ast} to be {value}"),
             Ok(expr) => panic!("Expected a literal, got {:?}", expr),
             Err(e) => panic!("Error: {}", e),
@@ -491,7 +505,7 @@ mod tests {
     #[case("!!true", Expr::Unary(UnaryOperator::Not, Box::new(Expr::Unary(UnaryOperator::Not, Box::new(Expr::Literal(true.into()))))))]
     fn parsing_unary_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
             Err(e) => panic!("Error: {}", e),
         }
@@ -512,7 +526,7 @@ mod tests {
     #[case("\"xyz\" endswith_cs \"z\"", Expr::Binary(Box::new(Expr::Literal("xyz".into())), BinaryOperator::EndsWithCs, Box::new(Expr::Literal("z".into()))))]
     fn parse_comparison_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
             Err(e) => panic!("Error: {}", e),
         }
@@ -542,7 +556,7 @@ mod tests {
     )]
     fn parsing_like_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
             Err(e) => panic!("Error: {}", e),
         }
@@ -557,7 +571,7 @@ mod tests {
     #[case("name matches \"^release/v\\\\d+$\"", "^release/v\\d+$")]
     fn parsing_matches_expressions(#[case] input: &str, #[case] pattern: &str) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(Expr::Matches(left, regex)) => {
                 assert_eq!(*left, Expr::Property("name"));
                 assert_eq!(regex.pattern(), pattern);
@@ -571,7 +585,7 @@ mod tests {
     #[test]
     fn parsing_invalid_regex_patterns_fails_with_details() {
         let tokens = crate::lexer::Scanner::new("name matches r\"(unclosed\"");
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => panic!("Expected an error, got {:?}", expr),
             Err(e) => {
                 let message = e.to_string();
@@ -594,7 +608,7 @@ mod tests {
     #[test]
     fn parsing_matches_without_the_regex_feature_fails_with_advice() {
         let tokens = crate::lexer::Scanner::new("name matches r\"^v\\d+$\"");
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => panic!("Expected an error, got {:?}", expr),
             Err(e) => {
                 let message = e.to_string();
@@ -643,7 +657,7 @@ mod tests {
     )]
     fn invalid_like_patterns(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => panic!("Expected an error, got {:?}", expr),
             Err(e) => assert!(
                 e.to_string().contains(message),
@@ -666,7 +680,7 @@ mod tests {
     )]
     fn invalid_matches_patterns(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => panic!("Expected an error, got {:?}", expr),
             Err(e) => assert!(
                 e.to_string().contains(message),
@@ -680,7 +694,7 @@ mod tests {
     #[test]
     fn raw_strings_are_plain_string_literals() {
         let tokens = crate::lexer::Scanner::new("r\"a\\d\"");
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(Expr::Literal(value)) => assert_eq!(value, "a\\d".into()),
             Ok(expr) => panic!("Expected a literal, got {:?}", expr),
             Err(e) => panic!("Error: {}", e),
@@ -692,7 +706,7 @@ mod tests {
         // The hashed form carries its embedded quotes through verbatim, which is
         // what makes it convenient for representing JSON.
         let tokens = crate::lexer::Scanner::new("r#\"{\"status\":\"ok\"}\"#");
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(Expr::Literal(value)) => assert_eq!(value, "{\"status\":\"ok\"}".into()),
             Ok(expr) => panic!("Expected a literal, got {:?}", expr),
             Err(e) => panic!("Error: {}", e),
@@ -705,7 +719,7 @@ mod tests {
     #[case("true && (true || false)", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::And, Box::new(Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::Or, Box::new(Expr::Literal(false.into()))))))]
     fn parsing_logical_expressions(#[case] input: &str, #[case] ast: Expr<'_>) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => assert_eq!(ast, expr, "Expected {ast} to be {expr}"),
             Err(e) => panic!("Error: {}", e),
         }
@@ -754,7 +768,7 @@ mod tests {
     )]
     fn invalid_filters(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
-        match Parser::parse(tokens.into_iter()) {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
             Ok(expr) => panic!("Expected an error, got {:?}", expr),
             Err(e) => assert!(
                 e.to_string().contains(message),
@@ -768,13 +782,17 @@ mod tests {
     #[test]
     fn unknown_function_errors_list_the_supported_functions() {
         let tokens = crate::lexer::Scanner::new("nope()");
-        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        let error = Parser::parse(tokens.into_iter(), &base_functions())
+            .expect_err("the filter should fail to parse");
+        // The available list is built from the registered functions, so `now()`
+        // only appears when the chrono feature includes it.
+        #[cfg(feature = "chrono")]
         assert!(
             error.to_string().contains("now()"),
             "Expected the error to list the supported functions, got '{error}'"
         );
         assert!(
-            error.to_string().contains("trim"),
+            error.to_string().contains("trim()"),
             "Expected the error to list the supported functions, got '{error}'"
         );
     }
@@ -782,8 +800,9 @@ mod tests {
     #[test]
     fn trim_parses_to_a_function_call() {
         let tokens = crate::lexer::Scanner::new("trim(name)");
-        match Parser::parse(tokens.into_iter()) {
-            Ok(Expr::FunctionCall("trim", args)) => {
+        match Parser::parse(tokens.into_iter(), &base_functions()) {
+            Ok(Expr::FunctionCall(function, args)) => {
+                assert_eq!(function.name(), "trim");
                 assert_eq!(args.len(), 1);
                 assert_eq!(args[0], Expr::Property("name"));
             }
@@ -795,15 +814,16 @@ mod tests {
     #[rstest]
     #[case(
         "trim()",
-        "The 'trim()' function at line 1, column 1 expects exactly one string argument, but your filter provided 0."
+        "The 'trim()' function at line 1, column 1 expects 1 argument, but your filter provided 0."
     )]
     #[case(
         "trim(name, other)",
-        "The 'trim()' function at line 1, column 1 expects exactly one string argument, but your filter provided 2."
+        "The 'trim()' function at line 1, column 1 expects 1 argument, but your filter provided 2."
     )]
     fn trim_requires_exactly_one_argument(#[case] input: &str, #[case] message: &str) {
         let tokens = crate::lexer::Scanner::new(input);
-        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        let error = Parser::parse(tokens.into_iter(), &base_functions())
+            .expect_err("the filter should fail to parse");
         assert!(
             error.to_string().contains(message),
             "Expected error message to contain '{}', got '{}'",
@@ -816,7 +836,8 @@ mod tests {
     #[test]
     fn now_requires_the_chrono_feature() {
         let tokens = crate::lexer::Scanner::new("now()");
-        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        let error = Parser::parse(tokens.into_iter(), &base_functions())
+            .expect_err("the filter should fail to parse");
         assert!(
             error.to_string().contains("'chrono' feature"),
             "Expected the error to mention the 'chrono' feature, got '{error}'"
@@ -827,7 +848,8 @@ mod tests {
     #[test]
     fn durations_require_the_chrono_feature() {
         let tokens = crate::lexer::Scanner::new("5m");
-        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        let error = Parser::parse(tokens.into_iter(), &base_functions())
+            .expect_err("the filter should fail to parse");
         assert!(
             error.to_string().contains("'chrono' feature"),
             "Expected the error to mention the 'chrono' feature, got '{error}'"
@@ -841,8 +863,11 @@ mod tests {
         #[test]
         fn now_parses_to_a_function_call() {
             let tokens = crate::lexer::Scanner::new("now()");
-            match Parser::parse(tokens.into_iter()) {
-                Ok(Expr::FunctionCall("now", args)) => assert!(args.is_empty()),
+            match Parser::parse(tokens.into_iter(), &base_functions()) {
+                Ok(Expr::FunctionCall(function, args)) => {
+                    assert_eq!(function.name(), "now");
+                    assert!(args.is_empty());
+                }
                 Ok(expr) => panic!("Expected a function call, got {:?}", expr),
                 Err(e) => panic!("Error: {}", e),
             }
@@ -851,11 +876,11 @@ mod tests {
         #[test]
         fn now_rejects_arguments_at_parse_time() {
             let tokens = crate::lexer::Scanner::new("now(1)");
-            let error =
-                Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+            let error = Parser::parse(tokens.into_iter(), &base_functions())
+                .expect_err("the filter should fail to parse");
             assert!(
                 error.to_string().contains(
-                    "The 'now()' function at line 1, column 1 does not accept any arguments, but your filter provided 1."
+                    "The 'now()' function at line 1, column 1 expects 0 arguments, but your filter provided 1."
                 ),
                 "Expected an arity error, got '{error}'"
             );
@@ -874,7 +899,7 @@ mod tests {
         #[case("0s", chrono::Duration::zero())]
         fn duration_literals(#[case] input: &str, #[case] expected: chrono::Duration) {
             let tokens = crate::lexer::Scanner::new(input);
-            match Parser::parse(tokens.into_iter()) {
+            match Parser::parse(tokens.into_iter(), &base_functions()) {
                 Ok(Expr::Literal(FilterValue::Duration(d))) => assert_eq!(d, expected),
                 Ok(expr) => panic!("Expected a duration literal, got {:?}", expr),
                 Err(e) => panic!("Error: {}", e),
