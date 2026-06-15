@@ -65,7 +65,7 @@
 //! | Boolean    | `true`, `false`        |                                                  |
 //! | Number     | `123`, `123.45`        | All numbers are 64-bit floats internally.        |
 //! | String     | `"hello"`              | Escape embedded quotes with `\"`.                |
-//! | Raw string | `r"^v\d+$"`            | No escape processing; cannot contain `"` (the `r#"..."#` form is not supported). |
+//! | Raw string | `r"^v\d+$"`            | No escape processing. Use the hashed form `r#"..."#` (e.g. `r#"{"k":1}"#`) to embed `"`. |
 //! | Tuple      | `["a", "b"]`           | A list of literal values.                        |
 //! | Duration   | `5m`, `1h30m`, `500ms` | Requires the **`chrono`** crate feature.         |
 //!

@@ -248,6 +248,22 @@ mod strings {
     }
 
     #[test]
+    fn hashed_raw_strings_carry_embedded_quotes() {
+        // The motivating use case: a JSON value written as a hashed raw string,
+        // with its `"` characters surviving verbatim (no escaping needed). The
+        // outer Rust literals use `r##"..."##` so the DSL text below is exactly
+        // `r#"{"status":"ok"}"# == r#"{"status":"ok"}"#`.
+        assert!(matches(r##"r#"{"status":"ok"}"# == r#"{"status":"ok"}"#"##));
+
+        // A hashed raw string and the equivalent escaped plain string denote
+        // the same value, so the two forms are interchangeable.
+        assert!(matches(r##"r#"{"k":1}"# == "{\"k\":1}""##));
+
+        // A `"` that isn't part of the closing delimiter is ordinary content.
+        assert!(matches(r##"r#"a"b"# == "a\"b""##));
+    }
+
+    #[test]
     fn unicode_strings_are_supported() {
         let doc = Document {
             title: "Jürgen's Café Guide ☕".to_string(),

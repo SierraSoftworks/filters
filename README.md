@@ -107,7 +107,7 @@ matching whenever the expression evaluates to a truthy value (`null`, `false`,
 | Boolean    | `true`, `false`        |                                                  |
 | Number     | `123`, `123.45`        | All numbers are 64-bit floats internally.        |
 | String     | `"hello"`              | Escape embedded quotes with `\"`.                |
-| Raw string | `r"^v\d+$"`            | No escape processing; cannot contain `"`.        |
+| Raw string | `r"^v\d+$"`            | No escape processing. Use `r#"..."#` (e.g. `r#"{"k":1}"#`) to embed `"`. |
 | Tuple      | `["a", "b"]`           | A list of literal values.                        |
 | Duration   | `5m`, `1h30m`, `500ms` | Requires the `chrono` feature.                   |
 
