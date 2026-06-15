@@ -154,6 +154,8 @@ filter is parsed, with an error listing the supported functions.
 | Function       | Result                                                                   |
 | -------------- | ------------------------------------------------------------------------ |
 | `now()`        | The current UTC time, evaluated afresh on every `Filter::matches` call. Requires the `chrono` feature. |
+| `ago(duration)` | The current UTC time minus `duration`, equivalent to `now() - duration` (e.g. `ago(30m)`). Requires the `chrono` feature. |
+| `datetime(string)` | An absolute UTC time parsed from an ISO 8601 string (e.g. `datetime("2026-03-12T12:00:00")`). Requires the `chrono` feature. |
 | `trim(string)` | The string argument with leading and trailing whitespace removed (`null` for non-string values). |
 
 You can extend the language with your own helpers by implementing the

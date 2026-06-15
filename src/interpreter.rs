@@ -567,6 +567,26 @@ mod tests {
         // now() is evaluated at filtering time and produces a datetime.
         #[case("now()", true)]
         #[case("now() == null", false)]
+        // ago(duration) is now() - duration, so it lies in the past.
+        #[case("ago(1h) < now()", true)]
+        #[case("now() - ago(1h) > 1h - 1s", true)]
+        #[case("now() - ago(1h) < 1h + 1s", true)]
+        #[case("ago(0s) <= now()", true)]
+        // ago() with a non-duration argument is null.
+        #[case("ago(5) == null", true)]
+        // datetime() parses an absolute point in time from an ISO 8601 string.
+        #[case("datetime(\"2026-03-12T12:00:00\") < now()", true)]
+        #[case(
+            "datetime(\"2026-03-12T12:00:00\") == datetime(\"2026-03-12T12:00:00\")",
+            true
+        )]
+        #[case(
+            "datetime(\"2026-03-12T12:00:00+02:00\") == datetime(\"2026-03-12T10:00:00\")",
+            true
+        )]
+        // An unparseable or non-string datetime() argument is null.
+        #[case("datetime(\"not a datetime\") == null", true)]
+        #[case("datetime(5) == null", true)]
         // Datetime arithmetic and comparisons.
         #[case("now() + 1h > now()", true)]
         #[case("now() - 1h < now()", true)]
