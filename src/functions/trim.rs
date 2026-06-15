@@ -26,7 +26,7 @@ function! {
                 Cow::Owned(FilterValue::String(Cow::Owned(s.trim().to_string())))
             }
             #[cfg(feature = "secrecy")]
-            FilterValue::Secret(s) => Cow::Owned(FilterValue::secret(string.expose_secret().trim())),
+            FilterValue::Secret(s) => Cow::Owned(FilterValue::secret(s.expose_secret().trim())),
             _ => Cow::Owned(FilterValue::Null),
         }
     }

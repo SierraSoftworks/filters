@@ -38,6 +38,7 @@ macro_rules! function {
             }
 
             fn call<'a>(&self, args: &[::std::borrow::Cow<'a, $crate::FilterValue<'a>>]) -> ::std::borrow::Cow<'a, $crate::FilterValue<'a>> {
+                #[allow(unused_variables, unused_mut)]
                 let mut iter = args.iter();
                 $(let $arg = iter.next().unwrap();)*
                 $body

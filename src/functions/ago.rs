@@ -2,8 +2,6 @@ use std::borrow::Cow;
 
 use crate::FilterValue;
 
-use super::Function;
-
 function! {
     /// The `ago(duration)` function: the point in time exactly `duration` before the
     /// current UTC time, evaluated afresh on every
@@ -15,12 +13,12 @@ function! {
     ///
     /// *Only available when the `chrono` crate feature is enabled.*
     ago(duration) {
-        match duration {
+        match duration.as_ref() {
             FilterValue::Duration(d) => match chrono::Utc::now().checked_sub_signed(*d) {
-                Some(dt) => FilterValue::DateTime(dt),
-                None => FilterValue::Null,
+                Some(dt) => Cow::Owned(FilterValue::DateTime(dt)),
+                None => Cow::Owned(FilterValue::Null),
             },
-            _ => FilterValue::Null,
+            _ => Cow::Owned(FilterValue::Null),
         }
     }
 }

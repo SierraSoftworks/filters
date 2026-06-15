@@ -5,8 +5,6 @@ use secrecy::ExposeSecret;
 
 use crate::FilterValue;
 
-use super::Function;
-
 function! {
     /// The `datetime(string)` function: parses an ISO 8601 / RFC 3339 string into an
     /// absolute point in time, e.g. `datetime("2026-03-12T12:00:00")`.
@@ -56,7 +54,7 @@ mod tests {
 
     use crate::{FilterValue, functions::Function};
 
-    use super::DateTimeFn;
+    use super::datetime;
 
     #[test]
     fn name_and_arity() {
