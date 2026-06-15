@@ -1,5 +1,8 @@
 use std::borrow::Cow;
 
+#[cfg(feature = "secrecy")]
+use secrecy::ExposeSecret;
+
 #[cfg(feature = "regex")]
 use super::pattern::CompiledRegex;
 use super::{
@@ -54,13 +57,16 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
     fn visit_function_call(
         &mut self,
         name: &'e str,
-        _args: &'e [Expr<'e>],
+        args: &'e [Expr<'e>],
     ) -> Cow<'e, FilterValue<'e>> {
         match name {
             // now() is evaluated at filtering time, so each call to
             // Filter::matches sees the current time.
             #[cfg(feature = "chrono")]
             "now" => Cow::Owned(FilterValue::DateTime(chrono::Utc::now())),
+            // trim() strips leading and trailing whitespace from a string,
+            // borrowing the trimmed sub-slice wherever it can.
+            "trim" => trim(self.visit_expr(&args[0])),
             // Function names and arities are validated when the filter is
             // parsed, so an unknown function here indicates a parser bug.
             _ => unreachable!("Encountered a call to an unexpected function '{name}'"),
@@ -202,6 +208,46 @@ fn subtract<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, Filter
     }
 }
 
+/// Evaluates the `trim(string)` function, removing leading and trailing
+/// whitespace from a string value. A secret string is trimmed too, but is
+/// re-wrapped as a secret so that it stays redacted. Any other (non-string)
+/// argument yields [`FilterValue::Null`], consistent with the language's
+/// lenient handling of type mismatches.
+fn trim<'a>(value: Cow<'a, FilterValue<'a>>) -> Cow<'a, FilterValue<'a>> {
+    // Only string-like values can be trimmed; everything else yields null.
+    // Checking before we take ownership means a non-string argument (such as a
+    // tuple) is never cloned just to be dropped.
+    let trimmable = matches!(value.as_ref(), FilterValue::String(_));
+    #[cfg(feature = "secrecy")]
+    let trimmable = trimmable || matches!(value.as_ref(), FilterValue::Secret(_));
+    if !trimmable {
+        return Cow::Owned(FilterValue::Null);
+    }
+
+    match value.into_owned() {
+        // A borrowed string trims to a sub-slice of the very same bytes, so the
+        // result stays borrowed and the trim itself allocates nothing.
+        FilterValue::String(Cow::Borrowed(s)) => {
+            Cow::Owned(FilterValue::String(Cow::Borrowed(s.trim())))
+        }
+        // An owned string already paid for its allocation when it was produced,
+        // so trim it in place rather than allocating a fresh copy.
+        FilterValue::String(Cow::Owned(mut s)) => {
+            let end = s.trim_end().len();
+            s.truncate(end);
+            let start = s.len() - s.trim_start().len();
+            s.drain(..start);
+            Cow::Owned(FilterValue::String(Cow::Owned(s)))
+        }
+        // A secret is trimmed but stays wrapped so it remains redacted; the
+        // trimmed text must be owned by a fresh secret, so this allocates.
+        #[cfg(feature = "secrecy")]
+        FilterValue::Secret(s) => Cow::Owned(FilterValue::secret(s.expose_secret().trim())),
+        // Unreachable: the guard above accepts only string-like values.
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
 #[inline]
 fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue<'a>> {
     Cow::Owned(FilterValue::Bool(value))
@@ -235,6 +281,7 @@ mod tests {
             match property {
                 "boolean" => true.into(),
                 "string" => "Alice".into(),
+                "padded" => "  Alice  ".into(),
                 "number" => 1.into(),
                 "null" => FilterValue::Null,
                 "tuple" => vec![true.into(), false.into()].into(),
@@ -519,6 +566,45 @@ mod tests {
     #[case("string > number", false)]
     fn mismatched_type_comparisons(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    // Leading and trailing whitespace (of every kind) is removed...
+    #[case("trim(\"  hello  \") == \"hello\"", true)]
+    #[case("trim(\"\nhello\t\") == \"hello\"", true)]
+    #[case("trim(\"hello\") == \"hello\"", true)]
+    // ...while whitespace in the interior is preserved.
+    #[case("trim(\"  a b  \") == \"a b\"", true)]
+    // Empty and all-whitespace strings trim to the empty string.
+    #[case("trim(\"\") == \"\"", true)]
+    #[case("trim(\"   \") == \"\"", true)]
+    // String properties are trimmed just like literals.
+    #[case("trim(padded) == \"Alice\"", true)]
+    #[case("trim(padded) == string", true)]
+    // The trimmed result still compares case-insensitively.
+    #[case("trim(padded) == \"alice\"", true)]
+    // Non-string arguments yield null (the lenient type-mismatch behaviour).
+    #[case("trim(number) == null", true)]
+    #[case("trim(null) == null", true)]
+    #[case("trim(boolean) == null", true)]
+    #[case("trim(tuple) == null", true)]
+    #[case("trim(names) == null", true)]
+    fn trim_function(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[cfg(feature = "secrecy")]
+    #[test]
+    fn trim_keeps_secrets_wrapped_and_redacted() {
+        // A secret is trimmed just like a string, but the result stays a secret
+        // so it can never leak through formatting.
+        let trimmed = trim(Cow::Owned(FilterValue::secret("  hunter2  ")));
+        let trimmed = trimmed.as_ref();
+
+        assert!(matches!(trimmed, FilterValue::Secret(_)));
+        assert_eq!(trimmed.to_string(), "[REDACTED]");
+        // The trimmed secret compares equal to the trimmed plaintext.
+        assert_eq!(trimmed, &FilterValue::String("hunter2".into()));
     }
 
     #[cfg(feature = "chrono")]

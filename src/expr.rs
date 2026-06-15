@@ -245,6 +245,10 @@ mod tests {
         Expr::FunctionCall("now", vec![Expr::Literal(1.into()), Expr::Property("test")]),
         "(call now 1 (property test))"
     )]
+    #[case(
+        Expr::FunctionCall("trim", vec![Expr::Property("name")]),
+        "(call trim (property name))"
+    )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {
         assert_eq!(view, format!("{expr}"));
         assert_eq!(view, format!("{expr:?}"));

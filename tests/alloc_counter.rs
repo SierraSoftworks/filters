@@ -123,6 +123,11 @@ fn evaluation_allocation_counts() {
             "a string property against a tuple literal (the property borrows, so it doesn't allocate)",
         ),
         (
+            r#"trim(hostname) == "web-01.example.com""#,
+            0,
+            "trim() of a borrowed string property (the trimmed sub-slice borrows too, so nothing allocates)",
+        ),
+        (
             r#"tags contains "production""#,
             1,
             "a tuple property (only the backing Vec allocates; its three strings are borrowed)",

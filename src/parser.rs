@@ -334,10 +334,24 @@ impl<'a, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, I> {
                     Ok(())
                 }
             }
+            "trim" => {
+                if arity != 1 {
+                    Err(human_errors::user(
+                        format!(
+                            "The 'trim()' function at {loc} expects exactly one string argument, but your filter provided {arity}."
+                        ),
+                        &[
+                            "Call 'trim()' with a single string argument, for example trim(repo.name).",
+                        ],
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
             _ => Err(human_errors::user(
                 format!("Your filter called an unknown function '{name}()' at {loc}."),
                 &[
-                    "Make sure that you are calling one of the functions supported by the filter language: now().",
+                    "Make sure that you are calling one of the functions supported by the filter language: now(), trim(string).",
                 ],
             )),
         }
@@ -758,6 +772,43 @@ mod tests {
         assert!(
             error.to_string().contains("now()"),
             "Expected the error to list the supported functions, got '{error}'"
+        );
+        assert!(
+            error.to_string().contains("trim"),
+            "Expected the error to list the supported functions, got '{error}'"
+        );
+    }
+
+    #[test]
+    fn trim_parses_to_a_function_call() {
+        let tokens = crate::lexer::Scanner::new("trim(name)");
+        match Parser::parse(tokens.into_iter()) {
+            Ok(Expr::FunctionCall("trim", args)) => {
+                assert_eq!(args.len(), 1);
+                assert_eq!(args[0], Expr::Property("name"));
+            }
+            Ok(expr) => panic!("Expected a function call, got {:?}", expr),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    #[rstest]
+    #[case(
+        "trim()",
+        "The 'trim()' function at line 1, column 1 expects exactly one string argument, but your filter provided 0."
+    )]
+    #[case(
+        "trim(name, other)",
+        "The 'trim()' function at line 1, column 1 expects exactly one string argument, but your filter provided 2."
+    )]
+    fn trim_requires_exactly_one_argument(#[case] input: &str, #[case] message: &str) {
+        let tokens = crate::lexer::Scanner::new(input);
+        let error = Parser::parse(tokens.into_iter()).expect_err("the filter should fail to parse");
+        assert!(
+            error.to_string().contains(message),
+            "Expected error message to contain '{}', got '{}'",
+            message,
+            error
         );
     }
 

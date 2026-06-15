@@ -458,6 +458,10 @@ mod functions {
             error.contains("now()"),
             "expected the error to list the supported functions, got: {error}"
         );
+        assert!(
+            error.contains("trim"),
+            "expected the error to list the supported functions, got: {error}"
+        );
     }
 
     #[test]
@@ -470,6 +474,38 @@ mod functions {
     #[test]
     fn now_requires_the_chrono_feature() {
         assert!(parse_error("now()").contains("'chrono' feature"));
+    }
+
+    // trim() needs no optional features, so it works in every build.
+    #[rstest]
+    #[case(r#"trim("  hello  ") == "hello""#, true)]
+    #[case(r#"trim("hello") == "hello""#, true)]
+    #[case(r#"trim("  a b  ") == "a b""#, true)] // only the outer whitespace goes
+    #[case(r#"trim("   ") == """#, true)]
+    #[case(r#"trim(doc.title) == "the rust book""#, true)] // borrowed string property
+    #[case("trim(doc.pages) == null", true)] // non-strings yield null
+    #[case("trim(doc.tags) == null", true)]
+    fn trim_strips_surrounding_whitespace(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(matches(filter), expected);
+    }
+
+    #[test]
+    fn trim_handles_string_properties_with_whitespace() {
+        let doc = Document {
+            title: "  The Rust Book  ".to_string(),
+            ..Document::default()
+        };
+        let filter = Filter::new(r#"trim(doc.title) == "The Rust Book""#).expect("parse filter");
+        assert!(filter.matches(&doc).unwrap());
+    }
+
+    #[test]
+    fn trim_requires_exactly_one_argument() {
+        assert!(parse_error("trim()").contains("expects exactly one string argument"));
+        assert!(
+            parse_error("trim(doc.title, doc.pages)")
+                .contains("expects exactly one string argument")
+        );
     }
 }
 

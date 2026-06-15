@@ -151,9 +151,10 @@ Filters may call built-in functions using the familiar `name(args...)` syntax.
 Unknown function names and incorrect argument counts are rejected when the
 filter is parsed, with an error listing the supported functions.
 
-| Function | Result                                                                   |
-| -------- | ------------------------------------------------------------------------ |
-| `now()`  | The current UTC time, evaluated afresh on every `Filter::matches` call. Requires the `chrono` feature. |
+| Function       | Result                                                                   |
+| -------------- | ------------------------------------------------------------------------ |
+| `now()`        | The current UTC time, evaluated afresh on every `Filter::matches` call. Requires the `chrono` feature. |
+| `trim(string)` | The string argument with leading and trailing whitespace removed (`null` for non-string values). |
 
 ### Case sensitivity
 
@@ -219,6 +220,7 @@ size > 1024 && (archived || disabled)
 branch.name like "feat/*"
 branch.name matches r"^release/v\d+(\.\d+){2}$"
 event.timestamp > now() - 5m
+trim(issue.title) != ""
 ```
 
 ## Datetime support

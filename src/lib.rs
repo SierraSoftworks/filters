@@ -220,9 +220,32 @@
 //! is parsed, so typos fail fast with a friendly error rather than at
 //! evaluation time.
 //!
-//! | Function | Result                                                                            |
-//! |----------|-----------------------------------------------------------------------------------|
-//! | `now()`  | The current UTC time, evaluated at each [`Filter::matches`] call. Requires **`chrono`**. |
+//! | Function       | Result                                                                                   |
+//! |----------------|------------------------------------------------------------------------------------------|
+//! | `now()`        | The current UTC time, evaluated at each [`Filter::matches`] call. Requires **`chrono`**.  |
+//! | `trim(string)` | Its string argument with leading and trailing whitespace removed (`null` for non-strings). |
+//!
+//! `trim` evaluates lazily and without allocating when its argument is a
+//! borrowed string (it returns a sub-slice of the original), making it cheap
+//! to normalise user input before comparing it:
+//!
+//! ```
+//! # use filt_rs::{Filter, FilterValue, Filterable};
+//! # struct Issue(&'static str);
+//! # impl Filterable for Issue {
+//! #     fn get(&self, key: &str) -> FilterValue<'_> {
+//! #         match key {
+//! #             "issue.title" => self.0.into(),
+//! #             _ => FilterValue::Null,
+//! #         }
+//! #     }
+//! # }
+//! # fn main() -> Result<(), filt_rs::Error> {
+//! let filter = Filter::new(r#"trim(issue.title) == "Release notes""#)?;
+//! assert!(filter.matches(&Issue("  Release notes\n"))?);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ## Datetimes and durations
 //!
