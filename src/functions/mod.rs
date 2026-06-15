@@ -2,7 +2,8 @@
 //!
 //! Filters may call functions using the `name(args...)` syntax. The crate ships
 //! a small base set (see [`base_functions`]) — currently [`Trim`] and, with the
-//! `chrono` feature, [`Now`] — but you can add your own by implementing
+//! `chrono` feature, [`Now`], [`Ago`], and [`DateTimeFn`] — but you can add your
+//! own by implementing
 //! [`Function`] and passing instances to
 //! [`Filter::with_functions`](crate::Filter::with_functions).
 
@@ -13,6 +14,16 @@ use crate::FilterValue;
 
 mod trim;
 pub(crate) use trim::Trim;
+
+#[cfg(feature = "chrono")]
+mod ago;
+#[cfg(feature = "chrono")]
+pub(crate) use ago::Ago;
+
+#[cfg(feature = "chrono")]
+mod datetime;
+#[cfg(feature = "chrono")]
+pub(crate) use datetime::DateTimeFn;
 
 #[cfg(feature = "chrono")]
 mod now;
@@ -88,7 +99,12 @@ pub trait Function: Send + Sync {
 pub(crate) fn base_functions() -> Arc<[Arc<dyn Function>]> {
     static BASE: LazyLock<Arc<[Arc<dyn Function>]>> = LazyLock::new(|| {
         #[cfg(feature = "chrono")]
-        let functions: Vec<Arc<dyn Function>> = vec![Arc::new(Trim), Arc::new(Now)];
+        let functions: Vec<Arc<dyn Function>> = vec![
+            Arc::new(Trim),
+            Arc::new(Now),
+            Arc::new(Ago),
+            Arc::new(DateTimeFn),
+        ];
         #[cfg(not(feature = "chrono"))]
         let functions: Vec<Arc<dyn Function>> = vec![Arc::new(Trim)];
         functions.into()

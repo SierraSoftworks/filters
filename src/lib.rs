@@ -223,6 +223,8 @@
 //! | Function       | Result                                                                                   |
 //! |----------------|------------------------------------------------------------------------------------------|
 //! | `now()`        | The current UTC time, evaluated at each [`Filter::matches`] call. Requires **`chrono`**.  |
+//! | `ago(duration)` | The current UTC time minus `duration`, equivalent to `now() - duration` (e.g. `ago(30m)`). Requires **`chrono`**. |
+//! | `datetime(string)` | An absolute UTC time parsed from an ISO 8601 string (e.g. `datetime("2026-03-12T12:00:00")`). Requires **`chrono`**. |
 //! | `trim(string)` | Its string argument with leading and trailing whitespace removed (`null` for non-strings). |
 //!
 //! `trim` evaluates lazily and without allocating when its argument is a
@@ -276,6 +278,8 @@
 //!
 //! ```text
 //! event.timestamp > now() - 5m
+//! event.timestamp > ago(5m)
+//! event.timestamp > datetime("2026-03-12T12:00:00")
 //! ```
 //!
 //! Without the `chrono` feature, duration literals and `now()` are still
@@ -291,7 +295,8 @@
 //! - **`chrono`** — adds datetime and duration support: the
 //!   [`FilterValue::DateTime`](FilterValue) and
 //!   [`FilterValue::Duration`](FilterValue) variants, duration literals such
-//!   as `5m` and `1h30m`, the `now()` function, and temporal arithmetic and
+//!   as `5m` and `1h30m`, the `now()`, `ago()`, and `datetime()` functions, and
+//!   temporal arithmetic and
 //!   comparisons (see [Datetimes and durations](#datetimes-and-durations)).
 //!
 //! - **`secrecy`** — adds a `FilterValue::Secret` variant backed by the
