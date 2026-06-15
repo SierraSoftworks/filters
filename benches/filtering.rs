@@ -167,6 +167,8 @@ fn bench_evaluation(c: &mut Criterion) {
         ),
         // Membership within a tuple-valued property.
         ("tuple_property", r#"repo.topics contains "cli""#, true),
+        // A built-in function call (trim) over a borrowed string property.
+        ("function_trim", r#"trim(repo.name) == "git-tool""#, true),
         // A realistic compound filter combining all of the above.
         ("compound_realistic", COMPLEX_FILTER, true),
     ];

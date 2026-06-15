@@ -54,13 +54,16 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
     fn visit_function_call(
         &mut self,
         name: &'e str,
-        _args: &'e [Expr<'e>],
+        args: &'e [Expr<'e>],
     ) -> Cow<'e, FilterValue<'e>> {
         match name {
             // now() is evaluated at filtering time, so each call to
             // Filter::matches sees the current time.
             #[cfg(feature = "chrono")]
             "now" => Cow::Owned(FilterValue::DateTime(chrono::Utc::now())),
+            // trim() strips leading and trailing whitespace from a string,
+            // borrowing the trimmed sub-slice wherever it can.
+            "trim" => trim(self.visit_expr(&args[0])),
             // Function names and arities are validated when the filter is
             // parsed, so an unknown function here indicates a parser bug.
             _ => unreachable!("Encountered a call to an unexpected function '{name}'"),
@@ -202,6 +205,38 @@ fn subtract<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, Filter
     }
 }
 
+/// Evaluates the `trim(string)` function, removing leading and trailing
+/// whitespace from a string value. Any non-string argument yields
+/// [`FilterValue::Null`], consistent with the language's lenient handling of
+/// type mismatches (and with the pattern operators, which likewise decline to
+/// operate on non-strings and secrets).
+fn trim<'a>(value: Cow<'a, FilterValue<'a>>) -> Cow<'a, FilterValue<'a>> {
+    // Only strings can be trimmed. Checking before we take ownership means a
+    // non-string argument (such as a tuple) is never cloned just to be dropped.
+    if !matches!(value.as_ref(), FilterValue::String(_)) {
+        return Cow::Owned(FilterValue::Null);
+    }
+
+    match value.into_owned() {
+        // A borrowed string trims to a sub-slice of the very same bytes, so the
+        // result stays borrowed and the trim itself allocates nothing.
+        FilterValue::String(Cow::Borrowed(s)) => {
+            Cow::Owned(FilterValue::String(Cow::Borrowed(s.trim())))
+        }
+        // An owned string already paid for its allocation when it was produced,
+        // so trim it in place rather than allocating a fresh copy.
+        FilterValue::String(Cow::Owned(mut s)) => {
+            let end = s.trim_end().len();
+            s.truncate(end);
+            let start = s.len() - s.trim_start().len();
+            s.drain(..start);
+            Cow::Owned(FilterValue::String(Cow::Owned(s)))
+        }
+        // Unreachable: the guard above accepts only string values.
+        _ => Cow::Owned(FilterValue::Null),
+    }
+}
+
 #[inline]
 fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue<'a>> {
     Cow::Owned(FilterValue::Bool(value))
@@ -235,6 +270,7 @@ mod tests {
             match property {
                 "boolean" => true.into(),
                 "string" => "Alice".into(),
+                "padded" => "  Alice  ".into(),
                 "number" => 1.into(),
                 "null" => FilterValue::Null,
                 "tuple" => vec![true.into(), false.into()].into(),
@@ -518,6 +554,31 @@ mod tests {
     #[case("number <= null", false)]
     #[case("string > number", false)]
     fn mismatched_type_comparisons(#[case] filter: &str, #[case] expected: bool) {
+        assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[rstest]
+    // Leading and trailing whitespace (of every kind) is removed...
+    #[case("trim(\"  hello  \") == \"hello\"", true)]
+    #[case("trim(\"\nhello\t\") == \"hello\"", true)]
+    #[case("trim(\"hello\") == \"hello\"", true)]
+    // ...while whitespace in the interior is preserved.
+    #[case("trim(\"  a b  \") == \"a b\"", true)]
+    // Empty and all-whitespace strings trim to the empty string.
+    #[case("trim(\"\") == \"\"", true)]
+    #[case("trim(\"   \") == \"\"", true)]
+    // String properties are trimmed just like literals.
+    #[case("trim(padded) == \"Alice\"", true)]
+    #[case("trim(padded) == string", true)]
+    // The trimmed result still compares case-insensitively.
+    #[case("trim(padded) == \"alice\"", true)]
+    // Non-string arguments yield null (the lenient type-mismatch behaviour).
+    #[case("trim(number) == null", true)]
+    #[case("trim(null) == null", true)]
+    #[case("trim(boolean) == null", true)]
+    #[case("trim(tuple) == null", true)]
+    #[case("trim(names) == null", true)]
+    fn trim_function(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
     }
 

@@ -115,6 +115,28 @@ fn like_adds_no_allocations_over_property_resolution() {
     );
 }
 
+fn trim_adds_no_allocations_over_property_resolution() {
+    let baseline = Filter::new("branch.name").expect("parse the baseline filter");
+    let trimmed =
+        Filter::new(r#"trim(branch.name) == "feat/login""#).expect("parse the trim filter");
+
+    // The surrounding whitespace is trimmed away to a borrowed sub-slice of the
+    // property's own bytes, so trimming allocates nothing over resolving it.
+    let target = Branch("  feat/login  ");
+
+    // Warm up so that any one-off allocations don't skew the measurement.
+    assert!(baseline.matches(&target).expect("evaluate the baseline"));
+    assert!(trimmed.matches(&target).expect("evaluate the trim filter"));
+
+    let baseline_allocs = allocations_for(&baseline, &target, true);
+    let trimmed_allocs = allocations_for(&trimmed, &target, true);
+
+    assert_eq!(
+        trimmed_allocs, baseline_allocs,
+        "trimming a borrowed string should allocate exactly as much as resolving the property"
+    );
+}
+
 fn like_against_non_string_properties_is_absolutely_allocation_free() {
     // Boolean property resolution doesn't allocate at all, so this proves the
     // entire evaluation pipeline (context setup, expression walking, and the
@@ -165,6 +187,9 @@ fn matches_adds_no_allocations_over_property_resolution_after_warmup() {
 fn main() {
     like_adds_no_allocations_over_property_resolution();
     println!("ok - like adds no allocations over property resolution");
+
+    trim_adds_no_allocations_over_property_resolution();
+    println!("ok - trim adds no allocations over property resolution");
 
     like_against_non_string_properties_is_absolutely_allocation_free();
     println!("ok - like against non-string properties is absolutely allocation-free");

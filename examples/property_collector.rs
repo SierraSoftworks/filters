@@ -78,6 +78,8 @@ fn main() -> Result<(), filt_rs::Error> {
         r#"repo.public && repo.stars >= 50"#,
         r#"repo.name startswith "git" || owner.login == "SierraSoftworks""#,
         r#"!repo.fork && repo.name in ["git-tool", "grey"] && repo.stars > repo.forks"#,
+        // Properties are discovered through function-call arguments too.
+        r#"trim(repo.description) != """#,
     ];
 
     for expression in expressions {
