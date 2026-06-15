@@ -165,24 +165,19 @@ makes them available *in addition to* the built-in set:
 ```rust,ignore
 use std::borrow::Cow;
 use std::sync::Arc;
-use filt_rs::{Filter, FilterValue, Function};
+use filt_rs::{Filter, FilterValue, function};
 
-struct Reverse;
-
-impl Function for Reverse {
-    fn name(&self) -> &str { "reverse" }
-    fn arity(&self) -> usize { 1 }
-    fn call<'a>(&self, args: &[Cow<'a, FilterValue<'a>>]) -> Cow<'a, FilterValue<'a>> {
-        match args[0].as_ref() {
-            FilterValue::String(s) => {
-                Cow::Owned(FilterValue::String(s.chars().rev().collect::<String>().into()))
-            }
+function! {
+    // Reverses a string, returning null for non-string values.
+    reverse(s) {
+        match s {
+            FilterValue::String(s) => Cow::Owned(FilterValue::String(s.chars().rev().collect::<String>().into())),
             _ => Cow::Owned(FilterValue::Null),
         }
     }
 }
 
-let custom: [Arc<dyn Function>; 1] = [Arc::new(Reverse)];
+let custom: [Arc<dyn Function>; 1] = [Arc::new(reverse)];
 let filter = Filter::with_functions(r#"reverse(word) == "olleh""#, custom)?;
 ```
 

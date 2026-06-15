@@ -244,7 +244,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::functions::Trim;
+    use crate::functions::trim::trim;
 
     #[rstest]
     #[case(Expr::Literal("value".into()), "\"value\"")]
@@ -277,13 +277,13 @@ mod tests {
         Expr::Like(Box::new(Expr::Property("branch.name")), Glob::compile_cs("feat/*"),),
         "(like_cs (property branch.name) \"feat/*\")"
     )]
-    #[case(Expr::FunctionCall(Arc::new(Trim), vec![]), "(call trim)")]
+    #[case(Expr::FunctionCall(Arc::new(trim), vec![]), "(call trim)")]
     #[case(
-        Expr::FunctionCall(Arc::new(Trim), vec![Expr::Literal(1.into()), Expr::Property("test")]),
+        Expr::FunctionCall(Arc::new(trim), vec![Expr::Literal(1.into()), Expr::Property("test")]),
         "(call trim 1 (property test))"
     )]
     #[case(
-        Expr::FunctionCall(Arc::new(Trim), vec![Expr::Property("name")]),
+        Expr::FunctionCall(Arc::new(trim), vec![Expr::Property("name")]),
         "(call trim (property name))"
     )]
     fn expression_visualization(#[case] expr: Expr<'_>, #[case] view: &str) {
