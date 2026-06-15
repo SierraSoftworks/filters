@@ -77,32 +77,86 @@ impl<'a> Scanner<'a> {
         ))
     }
 
-    fn read_raw_string(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
-        // `start` is the index of the `r` prefix; the opening quote (one byte
-        // further along) has already been consumed by the caller.
+    /// Returns the number of `#` characters in the opening delimiter of a raw
+    /// string beginning at the `r` at byte offset `start` — `0` for `r"`, `1`
+    /// for `r#"`, `2` for `r##"`, and so on. Returns `None` when the `r` is an
+    /// ordinary identifier character (such as the start of `release`) rather
+    /// than a raw-string prefix.
+    fn raw_string_hashes(&self, start: usize) -> Option<usize> {
+        // Look ahead through the source itself: `#` and `"` are single-byte, so
+        // counting bytes here stays on character boundaries.
+        let after = &self.source[start + 1..];
+        let hashes = after.bytes().take_while(|&b| b == b'#').count();
+        after[hashes..].starts_with('"').then_some(hashes)
+    }
+
+    /// Determines whether the `"` at byte offset `quote_idx` closes a raw string
+    /// that was opened with `hashes` `#` delimiters — that is, whether it is
+    /// followed by exactly `hashes` `#` characters. When it is, those trailing
+    /// `#` delimiters are consumed so the scanner resumes after them; otherwise
+    /// the `"` is ordinary string content and nothing is consumed.
+    fn match_raw_string_close(&mut self, quote_idx: usize, hashes: usize) -> bool {
+        let bytes = self.source.as_bytes();
+        if (quote_idx + 1..=quote_idx + hashes).any(|i| bytes.get(i) != Some(&b'#')) {
+            return false;
+        }
+
+        for _ in 0..hashes {
+            self.chars.next();
+        }
+        true
+    }
+
+    fn read_raw_string(
+        &mut self,
+        start: usize,
+        hashes: usize,
+    ) -> Result<Token<'a>, human_errors::Error> {
+        // `start` is the index of the `r` prefix; the `#`* delimiter and the
+        // opening quote have already been consumed by the caller, so the content
+        // begins `hashes + 2` bytes further along (past the `r`, the `#`s, and
+        // the `"`).
         let start_loc = Loc::new(self.line, 1 + start - self.line_start);
-        for (idx, c) in self.chars.by_ref() {
+        let content_start = start + 2 + hashes;
+
+        while let Some((idx, c)) = self.chars.next() {
             match c {
                 '\n' => {
                     self.line += 1;
                     self.line_start = idx + 1;
                 }
-                '"' => {
-                    return Ok(Token::RawString(start_loc, &self.source[start + 2..idx]));
+                // Unlike a plain string, a raw string ends only at a `"` which
+                // is followed by the same number of `#` delimiters that opened
+                // it, so embedded quotes (e.g. in JSON) need no escaping.
+                '"' if self.match_raw_string_close(idx, hashes) => {
+                    return Ok(Token::RawString(
+                        start_loc,
+                        &self.source[content_start..idx],
+                    ));
                 }
                 _ => {}
             }
         }
 
-        Err(human_errors::user(
-            format!(
-                "Reached the end of the filter without finding the closing quote for a raw string starting at {}.",
-                start_loc
-            ),
+        // The remedial advice differs by delimiter: a plain `r"..."` cannot
+        // contain a `"` at all, while a hashed raw string only needs its
+        // matching close.
+        let advice: &'static [&'static str] = if hashes == 0 {
             &[
                 "Make sure that you have terminated your raw string with a '\"' character.",
-                "Raw strings do not support escape sequences, so they cannot contain '\"' characters.",
-            ],
+                "If the string needs to contain a '\"' character, use a hashed raw string such as r#\"...\"# (terminated by '\"#') instead.",
+            ]
+        } else {
+            &[
+                "Make sure that you close the raw string with a '\"' followed by the same number of '#' characters that opened it (for example r#\"...\"# or r##\"...\"##).",
+            ]
+        };
+
+        Err(human_errors::user(
+            format!(
+                "Reached the end of the filter without finding the closing quote for a raw string starting at {start_loc}."
+            ),
+            advice,
         ))
     }
 
@@ -387,9 +441,20 @@ impl<'a> Iterator for Scanner<'a> {
                 '"' => {
                     return Some(self.read_string(idx));
                 }
-                'r' if matches!(self.chars.peek(), Some((_, '"'))) => {
-                    self.chars.next();
-                    return Some(self.read_raw_string(idx));
+                'r' => {
+                    return Some(match self.raw_string_hashes(idx) {
+                        // A raw string: `r"..."`, `r#"..."#`, `r##"..."##`, ...
+                        Some(hashes) => {
+                            // Consume the `#`* delimiter and the opening `"`
+                            // which `raw_string_hashes` looked ahead at.
+                            for _ in 0..=hashes {
+                                self.chars.next();
+                            }
+                            self.read_raw_string(idx, hashes)
+                        }
+                        // A bare `r` is just an ordinary identifier.
+                        None => self.read_identifier(idx),
+                    });
                 }
                 c if c.is_numeric() => {
                     return Some(self.read_number(idx));
@@ -520,6 +585,44 @@ mod tests {
             "r\"multi\nline\" && done",
             Token::RawString(Loc { line: 1, column: 1 }, "multi\nline"),
             Token::And(Loc { line: 2, column: 7 }),
+            Token::Property(.., "done"),
+        );
+    }
+
+    #[test]
+    fn test_hashed_raw_string() {
+        // A single `#` lets the content carry bare double quotes, which is the
+        // motivating case for embedding things like JSON.
+        assert_sequence!(
+            "r#\"{\"status\":\"ok\"}\"#",
+            Token::RawString(.., "{\"status\":\"ok\"}"),
+        );
+
+        // The string ends only at a `"` followed by the matching number of `#`,
+        // so a `"` which isn't followed by `#` is ordinary content.
+        assert_sequence!("r#\"a\"b\"#", Token::RawString(.., "a\"b"));
+
+        // Additional hashes let the content contain `"#` sequences verbatim.
+        assert_sequence!("r##\"a\"#b\"##", Token::RawString(.., "a\"#b"));
+
+        // Escape sequences are still not processed inside a hashed raw string.
+        assert_sequence!("r#\"a\\d\"#", Token::RawString(.., "a\\d"));
+
+        // The first matching close wins, so a surplus `#` is left as its own
+        // token rather than being swallowed by the string.
+        assert_sequence!(
+            "r#\"x\"##",
+            Token::RawString(.., "x"),
+            Token::Property(.., "#"),
+        );
+    }
+
+    #[test]
+    fn test_hashed_raw_string_location_tracking() {
+        assert_sequence!(
+            "r#\"multi\nline\"# && done",
+            Token::RawString(Loc { line: 1, column: 1 }, "multi\nline"),
+            Token::And(Loc { line: 2, column: 8 }),
             Token::Property(.., "done"),
         );
     }
@@ -732,6 +835,10 @@ mod tests {
     )]
     #[case(
         "r\"unterminated",
+        "Reached the end of the filter without finding the closing quote for a raw string starting at line 1, column 1"
+    )]
+    #[case(
+        "r#\"unterminated\"",
         "Reached the end of the filter without finding the closing quote for a raw string starting at line 1, column 1"
     )]
     fn test_lexing_errors(#[case] input: &str, #[case] message: &str) {

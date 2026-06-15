@@ -673,6 +673,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn hashed_raw_strings_are_plain_string_literals() {
+        // The hashed form carries its embedded quotes through verbatim, which is
+        // what makes it convenient for representing JSON.
+        let tokens = crate::lexer::Scanner::new("r#\"{\"status\":\"ok\"}\"#");
+        match Parser::parse(tokens.into_iter()) {
+            Ok(Expr::Literal(value)) => assert_eq!(value, "{\"status\":\"ok\"}".into()),
+            Ok(expr) => panic!("Expected a literal, got {:?}", expr),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
     #[rstest]
     #[case("true && false", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::And, Box::new(Expr::Literal(false.into()))))]
     #[case("true || false", Expr::Logical(Box::new(Expr::Literal(true.into())), LogicalOperator::Or, Box::new(Expr::Literal(false.into()))))]

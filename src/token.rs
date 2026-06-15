@@ -33,7 +33,8 @@ pub enum Token<'a> {
     False(Loc),
     /// A double-quoted string literal, carrying its (escape-processed) contents.
     String(Loc, &'a str),
-    /// A raw string literal `r"..."`, carrying its verbatim contents.
+    /// A raw string literal (`r"..."` or the hashed `r#"..."#` form), carrying
+    /// its verbatim contents.
     RawString(Loc, &'a str),
     /// A numeric literal, carrying its source text.
     Number(Loc, &'a str),
@@ -244,10 +245,31 @@ impl Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::String(.., s) => write!(f, "\"{s}\""),
-            Token::RawString(.., s) => write!(f, "r\"{s}\""),
+            Token::RawString(.., s) => {
+                // The token stores only the content, not how many `#` the author
+                // used, so pick the fewest delimiters that can hold it (none
+                // unless the content itself contains a `"`).
+                let hashes = "#".repeat(required_raw_string_hashes(s));
+                write!(f, "r{hashes}\"{s}\"{hashes}")
+            }
             t => write!(f, "{}", t.lexeme()),
         }
     }
+}
+
+/// Returns the smallest number of `#` delimiters needed to write `content` as a
+/// raw string without it terminating early: `0` when the content has no `"`, and
+/// otherwise one more than the longest run of `#` immediately following a `"`.
+fn required_raw_string_hashes(content: &str) -> usize {
+    let bytes = content.as_bytes();
+    let mut hashes = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'"' {
+            let run = bytes[i + 1..].iter().take_while(|&&b| b == b'#').count();
+            hashes = hashes.max(run + 1);
+        }
+    }
+    hashes
 }
 
 #[cfg(test)]
@@ -304,6 +326,10 @@ mod tests {
     #[case(Token::Number(LOC, "1.5"), "1.5")]
     #[case(Token::String(LOC, "hello"), "\"hello\"")]
     #[case(Token::RawString(LOC, "^\\d+$"), "r\"^\\d+$\"")]
+    // Content with a bare quote needs the hashed form so it can round-trip...
+    #[case(Token::RawString(LOC, "{\"k\":1}"), "r#\"{\"k\":1}\"#")]
+    // ...and content containing `"#` needs an extra hash to stay unambiguous.
+    #[case(Token::RawString(LOC, "a\"#b"), "r##\"a\"#b\"##")]
     #[case(Token::And(LOC), "&&")]
     fn display_matches_lexeme(#[case] token: Token<'_>, #[case] expected: &str) {
         assert_eq!(token.to_string(), expected);
