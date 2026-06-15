@@ -12,23 +12,17 @@ use std::sync::{Arc, LazyLock};
 
 use crate::FilterValue;
 
-mod trim;
-pub(crate) use trim::Trim;
+#[macro_use]
+mod macros;
+
+pub(crate) mod trim;
 
 #[cfg(feature = "chrono")]
 mod ago;
 #[cfg(feature = "chrono")]
-pub(crate) use ago::Ago;
-
-#[cfg(feature = "chrono")]
 mod datetime;
 #[cfg(feature = "chrono")]
-pub(crate) use datetime::DateTimeFn;
-
-#[cfg(feature = "chrono")]
 mod now;
-#[cfg(feature = "chrono")]
-pub(crate) use now::Now;
 
 /// A function which can be called from within a filter expression using the
 /// familiar `name(args...)` syntax.
@@ -98,15 +92,16 @@ pub trait Function: Send + Sync {
 /// the returned handle is cheap.
 pub(crate) fn base_functions() -> Arc<[Arc<dyn Function>]> {
     static BASE: LazyLock<Arc<[Arc<dyn Function>]>> = LazyLock::new(|| {
+        #[allow(unused_mut)]
+        let mut functions: Vec<Arc<dyn Function>> = vec![Arc::new(trim::trim)];
+
         #[cfg(feature = "chrono")]
-        let functions: Vec<Arc<dyn Function>> = vec![
-            Arc::new(Trim),
-            Arc::new(Now),
-            Arc::new(Ago),
-            Arc::new(DateTimeFn),
-        ];
-        #[cfg(not(feature = "chrono"))]
-        let functions: Vec<Arc<dyn Function>> = vec![Arc::new(Trim)];
+        {
+            functions.push(Arc::new(now::now));
+            functions.push(Arc::new(ago::ago));
+            functions.push(Arc::new(datetime::datetime));
+        }
+
         functions.into()
     });
 

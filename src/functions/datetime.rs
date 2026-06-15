@@ -5,19 +5,31 @@ use secrecy::ExposeSecret;
 
 use crate::FilterValue;
 
-use super::Function;
+function! {
+    /// The `datetime(string)` function: parses an ISO 8601 / RFC 3339 string into an
+    /// absolute point in time, e.g. `datetime("2026-03-12T12:00:00")`.
+    ///
+    /// A string carrying an explicit offset (e.g. `2026-03-12T12:00:00Z` or
+    /// `+02:00`) is honoured and converted to UTC; a string without an offset is
+    /// interpreted as UTC. Any argument which is not a string, or a string which
+    /// fails to parse, yields [`FilterValue::Null`], consistent with the language's
+    /// lenient handling of type mismatches.
+    ///
+    /// *Only available when the `chrono` crate feature is enabled.*
+    datetime(string) {
+        let parsed = match string.as_ref() {
+            FilterValue::String(s) => parse(s),
+            #[cfg(feature = "secrecy")]
+            FilterValue::Secret(s) => parse(s.expose_secret()),
+            _ => None,
+        };
 
-/// The `datetime(string)` function: parses an ISO 8601 / RFC 3339 string into an
-/// absolute point in time, e.g. `datetime("2026-03-12T12:00:00")`.
-///
-/// A string carrying an explicit offset (e.g. `2026-03-12T12:00:00Z` or
-/// `+02:00`) is honoured and converted to UTC; a string without an offset is
-/// interpreted as UTC. Any argument which is not a string, or a string which
-/// fails to parse, yields [`FilterValue::Null`], consistent with the language's
-/// lenient handling of type mismatches.
-///
-/// *Only available when the `chrono` crate feature is enabled.*
-pub(crate) struct DateTimeFn;
+        match parsed {
+            Some(dt) => Cow::Owned(FilterValue::DateTime(dt)),
+            None => Cow::Owned(FilterValue::Null),
+        }
+    }
+}
 
 /// Parses an ISO 8601 / RFC 3339 string into a UTC datetime.
 ///
@@ -34,30 +46,6 @@ fn parse(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|naive| naive.and_utc())
 }
 
-impl Function for DateTimeFn {
-    fn name(&self) -> &str {
-        "datetime"
-    }
-
-    fn arity(&self) -> usize {
-        1
-    }
-
-    fn call<'a>(&self, args: &[Cow<'a, FilterValue<'a>>]) -> Cow<'a, FilterValue<'a>> {
-        let parsed = match args[0].as_ref() {
-            FilterValue::String(s) => parse(s),
-            #[cfg(feature = "secrecy")]
-            FilterValue::Secret(s) => parse(s.expose_secret()),
-            _ => None,
-        };
-
-        match parsed {
-            Some(dt) => Cow::Owned(FilterValue::DateTime(dt)),
-            None => Cow::Owned(FilterValue::Null),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -66,17 +54,17 @@ mod tests {
 
     use crate::{FilterValue, functions::Function};
 
-    use super::DateTimeFn;
+    use super::datetime;
 
     #[test]
     fn name_and_arity() {
-        assert_eq!(DateTimeFn.name(), "datetime");
-        assert_eq!(DateTimeFn.arity(), 1);
+        assert_eq!(datetime.name(), "datetime");
+        assert_eq!(datetime.arity(), 1);
     }
 
     #[test]
     fn parses_a_naive_iso8601_string_as_utc() {
-        let result = DateTimeFn.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
+        let result = datetime.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
             "2026-03-12T12:00:00",
         )))]);
         assert_eq!(
@@ -88,7 +76,7 @@ mod tests {
     #[test]
     fn honours_an_explicit_offset() {
         // 12:00 at +02:00 is 10:00 UTC.
-        let result = DateTimeFn.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
+        let result = datetime.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
             "2026-03-12T12:00:00+02:00",
         )))]);
         assert_eq!(
@@ -99,7 +87,7 @@ mod tests {
 
     #[test]
     fn invalid_strings_yield_null() {
-        let result = DateTimeFn.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
+        let result = datetime.call(&[Cow::Owned(FilterValue::String(Cow::Borrowed(
             "not a datetime",
         )))]);
         assert_eq!(result.as_ref(), &FilterValue::Null);
@@ -107,7 +95,7 @@ mod tests {
 
     #[test]
     fn non_strings_yield_null() {
-        let result = DateTimeFn.call(&[Cow::Owned(FilterValue::Number(1.0))]);
+        let result = datetime.call(&[Cow::Owned(FilterValue::Number(1.0))]);
         assert_eq!(result.as_ref(), &FilterValue::Null);
     }
 }
