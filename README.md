@@ -156,6 +156,34 @@ filter is parsed, with an error listing the supported functions.
 | `now()`        | The current UTC time, evaluated afresh on every `Filter::matches` call. Requires the `chrono` feature. |
 | `trim(string)` | The string argument with leading and trailing whitespace removed (`null` for non-string values). |
 
+You can extend the language with your own helpers by implementing the
+`Function` trait and constructing filters with `Filter::with_functions`, which
+makes them available *in addition to* the built-in set:
+
+```rust,ignore
+use std::borrow::Cow;
+use std::sync::Arc;
+use filt_rs::{Filter, FilterValue, Function};
+
+struct Reverse;
+
+impl Function for Reverse {
+    fn name(&self) -> &str { "reverse" }
+    fn arity(&self) -> usize { 1 }
+    fn call<'a>(&self, args: &[Cow<'a, FilterValue<'a>>]) -> Cow<'a, FilterValue<'a>> {
+        match args[0].as_ref() {
+            FilterValue::String(s) => {
+                Cow::Owned(FilterValue::String(s.chars().rev().collect::<String>().into()))
+            }
+            _ => Cow::Owned(FilterValue::Null),
+        }
+    }
+}
+
+let custom: [Arc<dyn Function>; 1] = [Arc::new(Reverse)];
+let filter = Filter::with_functions(r#"reverse(word) == "olleh""#, custom)?;
+```
+
 ### Case sensitivity
 
 The string operators compare case-insensitively by default, folding both
@@ -302,7 +330,7 @@ operators can appear where), so you control how the tree is traversed:
 
 ```rust,ignore
 use std::collections::BTreeSet;
-use filt_rs::{BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Glob, LogicalOperator, UnaryOperator};
+use filt_rs::{BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Function, Glob, LogicalOperator, UnaryOperator};
 
 #[derive(Default)]
 struct PropertyCollector<'a> {
@@ -319,7 +347,7 @@ impl<'a> ExprVisitor<'a, ()> for PropertyCollector<'a> {
     }
     // ...and the other node kinds, recursing with `self.visit_expr(child)`.
 #   fn visit_literal(&mut self, _v: &'a FilterValue<'a>) {}
-#   fn visit_function_call(&mut self, _n: &'a str, args: &'a [Expr<'a>]) { for a in args { self.visit_expr(a); } }
+#   fn visit_function_call(&mut self, _f: &'a dyn Function, args: &'a [Expr<'a>]) { for a in args { self.visit_expr(a); } }
 #   fn visit_logical(&mut self, l: &'a Expr<'a>, _op: LogicalOperator, r: &'a Expr<'a>) { self.visit_expr(l); self.visit_expr(r); }
 #   fn visit_unary(&mut self, _op: UnaryOperator, r: &'a Expr<'a>) { self.visit_expr(r); }
 #   fn visit_like(&mut self, l: &'a Expr<'a>, _g: &'a Glob) { self.visit_expr(l); }

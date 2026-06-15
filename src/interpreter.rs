@@ -1,13 +1,11 @@
 use std::borrow::Cow;
 
-#[cfg(feature = "secrecy")]
-use secrecy::ExposeSecret;
-
 #[cfg(feature = "regex")]
 use super::pattern::CompiledRegex;
 use super::{
     FilterValue, Filterable,
     expr::{Expr, ExprVisitor},
+    functions::Function,
     operator::{BinaryOperator, LogicalOperator, UnaryOperator},
     pattern::Glob,
 };
@@ -56,20 +54,27 @@ impl<'e, T: Filterable> ExprVisitor<'e, Cow<'e, FilterValue<'e>>> for FilterCont
 
     fn visit_function_call(
         &mut self,
-        name: &'e str,
+        function: &'e dyn Function,
         args: &'e [Expr<'e>],
     ) -> Cow<'e, FilterValue<'e>> {
-        match name {
-            // now() is evaluated at filtering time, so each call to
-            // Filter::matches sees the current time.
-            #[cfg(feature = "chrono")]
-            "now" => Cow::Owned(FilterValue::DateTime(chrono::Utc::now())),
-            // trim() strips leading and trailing whitespace from a string,
-            // borrowing the trimmed sub-slice wherever it can.
-            "trim" => trim(self.visit_expr(&args[0])),
-            // Function names and arities are validated when the filter is
-            // parsed, so an unknown function here indicates a parser bug.
-            _ => unreachable!("Encountered a call to an unexpected function '{name}'"),
+        // Evaluate the arguments and hand them to the function. Small arities
+        // evaluate into a stack array so the common cases (which cover every
+        // built-in: 0 args for now(), 1 for trim()) stay allocation-free; larger
+        // calls fall back to a heap-allocated Vec.
+        match args {
+            [] => function.call(&[]),
+            [a] => function.call(&[self.visit_expr(a)]),
+            [a, b] => function.call(&[self.visit_expr(a), self.visit_expr(b)]),
+            [a, b, c] => {
+                function.call(&[self.visit_expr(a), self.visit_expr(b), self.visit_expr(c)])
+            }
+            _ => {
+                let evaluated = args
+                    .iter()
+                    .map(|arg| self.visit_expr(arg))
+                    .collect::<Vec<_>>();
+                function.call(&evaluated)
+            }
         }
     }
 
@@ -208,46 +213,6 @@ fn subtract<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, Filter
     }
 }
 
-/// Evaluates the `trim(string)` function, removing leading and trailing
-/// whitespace from a string value. A secret string is trimmed too, but is
-/// re-wrapped as a secret so that it stays redacted. Any other (non-string)
-/// argument yields [`FilterValue::Null`], consistent with the language's
-/// lenient handling of type mismatches.
-fn trim<'a>(value: Cow<'a, FilterValue<'a>>) -> Cow<'a, FilterValue<'a>> {
-    // Only string-like values can be trimmed; everything else yields null.
-    // Checking before we take ownership means a non-string argument (such as a
-    // tuple) is never cloned just to be dropped.
-    let trimmable = matches!(value.as_ref(), FilterValue::String(_));
-    #[cfg(feature = "secrecy")]
-    let trimmable = trimmable || matches!(value.as_ref(), FilterValue::Secret(_));
-    if !trimmable {
-        return Cow::Owned(FilterValue::Null);
-    }
-
-    match value.into_owned() {
-        // A borrowed string trims to a sub-slice of the very same bytes, so the
-        // result stays borrowed and the trim itself allocates nothing.
-        FilterValue::String(Cow::Borrowed(s)) => {
-            Cow::Owned(FilterValue::String(Cow::Borrowed(s.trim())))
-        }
-        // An owned string already paid for its allocation when it was produced,
-        // so trim it in place rather than allocating a fresh copy.
-        FilterValue::String(Cow::Owned(mut s)) => {
-            let end = s.trim_end().len();
-            s.truncate(end);
-            let start = s.len() - s.trim_start().len();
-            s.drain(..start);
-            Cow::Owned(FilterValue::String(Cow::Owned(s)))
-        }
-        // A secret is trimmed but stays wrapped so it remains redacted; the
-        // trimmed text must be owned by a fresh secret, so this allocates.
-        #[cfg(feature = "secrecy")]
-        FilterValue::Secret(s) => Cow::Owned(FilterValue::secret(s.expose_secret().trim())),
-        // Unreachable: the guard above accepts only string-like values.
-        _ => Cow::Owned(FilterValue::Null),
-    }
-}
-
 #[inline]
 fn wrap_bool<'a>(value: bool) -> Cow<'a, FilterValue<'a>> {
     Cow::Owned(FilterValue::Bool(value))
@@ -266,10 +231,11 @@ mod tests {
 
     impl TestFilterable {
         pub fn matches(filter: &str) -> bool {
-            use crate::parser::Parser;
+            use crate::{functions::base_functions, parser::Parser};
 
+            let functions = base_functions();
             let tokens = Scanner::new(filter);
-            let expr = Parser::parse(tokens).expect("parse the filter");
+            let expr = Parser::parse(tokens, &functions).expect("parse the filter");
             let mut context = FilterContext::new(&Self);
             let result = context.visit_expr(&expr);
             result.is_truthy()
@@ -591,20 +557,6 @@ mod tests {
     #[case("trim(names) == null", true)]
     fn trim_function(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
-    }
-
-    #[cfg(feature = "secrecy")]
-    #[test]
-    fn trim_keeps_secrets_wrapped_and_redacted() {
-        // A secret is trimmed just like a string, but the result stays a secret
-        // so it can never leak through formatting.
-        let trimmed = trim(Cow::Owned(FilterValue::secret("  hunter2  ")));
-        let trimmed = trimmed.as_ref();
-
-        assert!(matches!(trimmed, FilterValue::Secret(_)));
-        assert_eq!(trimmed.to_string(), "[REDACTED]");
-        // The trimmed secret compares equal to the trimmed plaintext.
-        assert_eq!(trimmed, &FilterValue::String("hunter2".into()));
     }
 
     #[cfg(feature = "chrono")]

@@ -247,6 +247,11 @@
 //! # }
 //! ```
 //!
+//! You can extend the language with your own functions by implementing the
+//! [`Function`] trait and constructing filters with
+//! [`Filter::with_functions`], which makes them available alongside the
+//! built-in set.
+//!
 //! ## Datetimes and durations
 //!
 //! With the **`chrono`** crate feature enabled, filters can work with points
@@ -347,6 +352,7 @@
 
 mod case_sensitivity;
 mod expr;
+mod functions;
 mod interpreter;
 mod lexer;
 mod location;
@@ -356,10 +362,12 @@ mod pattern;
 mod token;
 mod value;
 
-use std::{fmt::Display, pin::Pin, ptr::NonNull};
+use std::{fmt::Display, pin::Pin, ptr::NonNull, sync::Arc};
 
+use functions::base_functions;
 use interpreter::FilterContext;
 
+pub use functions::Function;
 pub use human_errors::Error;
 pub use value::{FilterValue, Filterable};
 
@@ -429,6 +437,10 @@ pub struct Filter {
     #[allow(clippy::box_collection)]
     filter: Pin<Box<String>>,
     ast: Expr<'static>,
+    /// The functions the expression was parsed against. Retained so the filter
+    /// can be re-parsed (e.g. when cloned) with the same set available, and to
+    /// keep any [`Function`]s referenced by the AST alive.
+    functions: Arc<[Arc<dyn Function>]>,
 }
 
 impl Filter {
@@ -448,18 +460,94 @@ impl Filter {
     /// assert!(error.to_string().contains("end of your filter expression"));
     /// ```
     pub fn new<S: Into<String>>(filter: S) -> Result<Self, Error> {
+        Self::build(filter.into(), base_functions())
+    }
+
+    /// Parses the provided filter expression with additional [`Function`]s
+    /// available, returning a reusable `Filter`.
+    ///
+    /// The supplied functions are made available *in addition to* the built-in
+    /// base set (which always takes precedence on a name collision), letting you
+    /// extend the filter language with your own helpers. The returned filter
+    /// remembers its function set, so [cloning](Clone) it preserves the custom
+    /// functions.
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    /// use std::sync::Arc;
+    /// use filt_rs::{Filter, FilterValue, Filterable, Function};
+    ///
+    /// /// A `reverse(string)` function which reverses its argument's characters.
+    /// struct Reverse;
+    ///
+    /// impl Function for Reverse {
+    ///     fn name(&self) -> &str {
+    ///         "reverse"
+    ///     }
+    ///
+    ///     fn arity(&self) -> usize {
+    ///         1
+    ///     }
+    ///
+    ///     fn call<'a>(&self, args: &[Cow<'a, FilterValue<'a>>]) -> Cow<'a, FilterValue<'a>> {
+    ///         match args[0].as_ref() {
+    ///             FilterValue::String(s) => {
+    ///                 Cow::Owned(FilterValue::String(s.chars().rev().collect::<String>().into()))
+    ///             }
+    ///             _ => Cow::Owned(FilterValue::Null),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// struct Word(&'static str);
+    ///
+    /// impl Filterable for Word {
+    ///     fn get(&self, key: &str) -> FilterValue<'_> {
+    ///         match key {
+    ///             "word" => self.0.into(),
+    ///             _ => FilterValue::Null,
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// # fn main() -> Result<(), filt_rs::Error> {
+    /// let custom: [Arc<dyn Function>; 1] = [Arc::new(Reverse)];
+    /// let filter = Filter::with_functions(r#"reverse(word) == "olleh""#, custom)?;
+    /// assert!(filter.matches(&Word("hello"))?);
+    ///
+    /// // Built-in functions remain available alongside your own.
+    /// let custom: [Arc<dyn Function>; 1] = [Arc::new(Reverse)];
+    /// let filter = Filter::with_functions(r#"trim(word) == "hi""#, custom)?;
+    /// assert!(filter.matches(&Word(" hi "))?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_functions<S, F>(filter: S, functions: F) -> Result<Self, Error>
+    where
+        S: Into<String>,
+        F: IntoIterator<Item = Arc<dyn Function>>,
+    {
+        // The base set comes first so that, on a name collision, a built-in
+        // function takes precedence over a user-supplied one.
+        let mut combined = base_functions().to_vec();
+        combined.extend(functions);
+        Self::build(filter.into(), combined.into())
+    }
+
+    fn build(filter: String, functions: Arc<[Arc<dyn Function>]>) -> Result<Self, Error> {
         // The AST borrows string slices from the filter expression itself. Pinning
         // the boxed string keeps those borrows valid for the lifetime of this
         // struct without re-allocating the lexemes.
-        let filter = Box::new(filter.into());
+        let filter = Box::new(filter);
         let filter_ptr = NonNull::from(&filter);
         let pinned = Box::into_pin(filter);
 
         let tokens = lexer::Scanner::new(unsafe { filter_ptr.as_ref() });
-        let ast = parser::Parser::parse(tokens.into_iter())?;
+        let ast = parser::Parser::parse(tokens.into_iter(), &functions)?;
         Ok(Self {
             filter: pinned,
             ast,
+            functions,
         })
     }
 
@@ -511,7 +599,7 @@ impl Filter {
     ///
     /// ```
     /// use filt_rs::{
-    ///     BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Glob,
+    ///     BinaryOperator, Expr, ExprVisitor, Filter, FilterValue, Function, Glob,
     ///     LogicalOperator, UnaryOperator,
     /// };
     ///
@@ -521,7 +609,7 @@ impl Filter {
     /// impl<'a> ExprVisitor<'a, usize> for NodeCounter {
     ///     fn visit_literal(&mut self, _value: &FilterValue) -> usize { 1 }
     ///     fn visit_property(&mut self, _name: &str) -> usize { 1 }
-    ///     fn visit_function_call(&mut self, _name: &str, args: &[Expr]) -> usize {
+    ///     fn visit_function_call(&mut self, _function: &dyn Function, args: &[Expr]) -> usize {
     ///         1 + args.iter().map(|arg| self.visit_expr(arg)).sum::<usize>()
     ///     }
     ///     fn visit_binary(&mut self, l: &'a Expr<'a>, _op: BinaryOperator, r: &'a Expr<'a>) -> usize {
@@ -590,13 +678,16 @@ impl Default for Filter {
         Self {
             filter: Box::pin("true".to_string()),
             ast: Expr::Literal(FilterValue::Bool(true)),
+            functions: base_functions(),
         }
     }
 }
 
 impl Clone for Filter {
     fn clone(&self) -> Self {
-        Self::new(self.raw()).expect("clone filter")
+        // Re-parse against the same function set so that any custom functions
+        // registered with [`Filter::with_functions`] remain available.
+        Self::build(self.raw().to_string(), Arc::clone(&self.functions)).expect("clone filter")
     }
 }
 
