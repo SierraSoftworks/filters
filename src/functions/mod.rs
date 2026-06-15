@@ -93,9 +93,7 @@ pub trait Function: Send + Sync {
 pub(crate) fn base_functions() -> Arc<[Arc<dyn Function>]> {
     static BASE: LazyLock<Arc<[Arc<dyn Function>]>> = LazyLock::new(|| {
         #[allow(unused_mut)]
-        let mut functions: Vec<Arc<dyn Function>> = vec![
-            Arc::new(trim::trim)
-        ];
+        let mut functions: Vec<Arc<dyn Function>> = vec![Arc::new(trim::trim)];
 
         #[cfg(feature = "chrono")]
         {
