@@ -4,7 +4,7 @@ use crate::FilterValue;
 
 use super::Function;
 
-function!{
+function! {
     /// The `ago(duration)` function: the point in time exactly `duration` before the
     /// current UTC time, evaluated afresh on every
     /// [`Filter::matches`](crate::Filter::matches) call. It is the equivalent of

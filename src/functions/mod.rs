@@ -12,7 +12,6 @@ use std::sync::{Arc, LazyLock};
 
 use crate::FilterValue;
 
-
 #[macro_use]
 mod macros;
 

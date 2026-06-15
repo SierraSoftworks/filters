@@ -7,7 +7,7 @@ use crate::FilterValue;
 
 use super::Function;
 
-function!{
+function! {
     /// The `datetime(string)` function: parses an ISO 8601 / RFC 3339 string into an
     /// absolute point in time, e.g. `datetime("2026-03-12T12:00:00")`.
     ///
