@@ -299,3 +299,25 @@ mod equivalence {
         }
     }
 }
+
+mod functions {
+    use super::*;
+
+    #[test]
+    fn trim_trims_a_secret_while_keeping_it_secret() {
+        let user = User {
+            password: SecretString::from("  hunter2  "),
+            ..User::default()
+        };
+
+        // The padded secret trims down to "hunter2" and still compares like a
+        // string would...
+        let trimmed = Filter::new(r#"trim(user.password) == "hunter2""#).expect("parse filter");
+        assert!(trimmed.matches(&user).unwrap());
+
+        // ...so the surrounding whitespace really has been removed.
+        let untrimmed =
+            Filter::new(r#"trim(user.password) == "  hunter2  ""#).expect("parse filter");
+        assert!(!untrimmed.matches(&user).unwrap());
+    }
+}

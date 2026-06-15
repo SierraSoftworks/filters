@@ -1,5 +1,8 @@
 use std::borrow::Cow;
 
+#[cfg(feature = "secrecy")]
+use secrecy::ExposeSecret;
+
 #[cfg(feature = "regex")]
 use super::pattern::CompiledRegex;
 use super::{
@@ -206,14 +209,18 @@ fn subtract<'a>(left: FilterValue<'a>, right: FilterValue<'a>) -> Cow<'a, Filter
 }
 
 /// Evaluates the `trim(string)` function, removing leading and trailing
-/// whitespace from a string value. Any non-string argument yields
-/// [`FilterValue::Null`], consistent with the language's lenient handling of
-/// type mismatches (and with the pattern operators, which likewise decline to
-/// operate on non-strings and secrets).
+/// whitespace from a string value. A secret string is trimmed too, but is
+/// re-wrapped as a secret so that it stays redacted. Any other (non-string)
+/// argument yields [`FilterValue::Null`], consistent with the language's
+/// lenient handling of type mismatches.
 fn trim<'a>(value: Cow<'a, FilterValue<'a>>) -> Cow<'a, FilterValue<'a>> {
-    // Only strings can be trimmed. Checking before we take ownership means a
-    // non-string argument (such as a tuple) is never cloned just to be dropped.
-    if !matches!(value.as_ref(), FilterValue::String(_)) {
+    // Only string-like values can be trimmed; everything else yields null.
+    // Checking before we take ownership means a non-string argument (such as a
+    // tuple) is never cloned just to be dropped.
+    let trimmable = matches!(value.as_ref(), FilterValue::String(_));
+    #[cfg(feature = "secrecy")]
+    let trimmable = trimmable || matches!(value.as_ref(), FilterValue::Secret(_));
+    if !trimmable {
         return Cow::Owned(FilterValue::Null);
     }
 
@@ -232,7 +239,11 @@ fn trim<'a>(value: Cow<'a, FilterValue<'a>>) -> Cow<'a, FilterValue<'a>> {
             s.drain(..start);
             Cow::Owned(FilterValue::String(Cow::Owned(s)))
         }
-        // Unreachable: the guard above accepts only string values.
+        // A secret is trimmed but stays wrapped so it remains redacted; the
+        // trimmed text must be owned by a fresh secret, so this allocates.
+        #[cfg(feature = "secrecy")]
+        FilterValue::Secret(s) => Cow::Owned(FilterValue::secret(s.expose_secret().trim())),
+        // Unreachable: the guard above accepts only string-like values.
         _ => Cow::Owned(FilterValue::Null),
     }
 }
@@ -580,6 +591,20 @@ mod tests {
     #[case("trim(names) == null", true)]
     fn trim_function(#[case] filter: &str, #[case] expected: bool) {
         assert_eq!(TestFilterable::matches(filter), expected);
+    }
+
+    #[cfg(feature = "secrecy")]
+    #[test]
+    fn trim_keeps_secrets_wrapped_and_redacted() {
+        // A secret is trimmed just like a string, but the result stays a secret
+        // so it can never leak through formatting.
+        let trimmed = trim(Cow::Owned(FilterValue::secret("  hunter2  ")));
+        let trimmed = trimmed.as_ref();
+
+        assert!(matches!(trimmed, FilterValue::Secret(_)));
+        assert_eq!(trimmed.to_string(), "[REDACTED]");
+        // The trimmed secret compares equal to the trimmed plaintext.
+        assert_eq!(trimmed, &FilterValue::String("hunter2".into()));
     }
 
     #[cfg(feature = "chrono")]
