@@ -1,8 +1,8 @@
 /// Defines a function type with the given name and argument names, implementing
-/// [`Function`] with the provided body.
+/// [`crate::Function`] with the provided body.
 ///
 /// The body may refer to the arguments by name, and must return a
-/// [`Cow<FilterValue>`]. The body is evaluated each time the function is called, and may
+/// [`std::borrow::Cow<FilterValue>`]. The body is evaluated each time the function is called, and may
 /// borrow from the arguments, but must not retain references to them beyond the
 /// lifetime of the returned value.
 ///
