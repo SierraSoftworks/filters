@@ -16,7 +16,7 @@ exclude = [".github/", "assets/", "AGENTS.md", "CLAUDE.md"]
 
 [dependencies]
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock", "std"] }
-human-errors = "0.2.3"
+human-errors = "0.2"
 regex = { version = "1.11", optional = true }
 secrecy = { version = "0.10", optional = true }
 serde = { version = "1.0", optional = true }
