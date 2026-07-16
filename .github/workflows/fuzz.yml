@@ -1,6 +1,10 @@
 name: Fuzz
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
@@ -14,7 +18,9 @@ jobs:
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
     env:
+      CARGO_FUZZ_VERSION: 0.13.2
       CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+      FUZZ_TIME: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 300 || 60 }}
       RUSTFLAGS: -C target-feature=-crt-static
     strategy:
       fail-fast: false
@@ -37,10 +43,29 @@ jobs:
             fuzz -> fuzz/target
           key: fuzz-${{ matrix.target }}
 
-      - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2.83.2
+      - name: Cache cargo-fuzz
+        uses: actions/cache@v4
         with:
-          tool: cargo-fuzz
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+
+      - name: Add cargo-fuzz to PATH
+        shell: bash
+        run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-fuzz
+        run: >-
+          cargo install
+          --root "${{ runner.tool_cache }}/cargo-fuzz"
+          --version "${{ env.CARGO_FUZZ_VERSION }}"
+          cargo-fuzz
+          --locked
+
+      - name: Build fuzz target
+        run: >-
+          cargo +nightly fuzz build
+          --target x86_64-unknown-linux-gnu
+          "${{ matrix.target }}"
 
       - name: Run fuzz target
         id: fuzz
@@ -50,7 +75,7 @@ jobs:
           set +e
           cargo +nightly fuzz run --target x86_64-unknown-linux-gnu \
             "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" -- \
-            -max_total_time=300 -timeout=10 2>&1 | tee "fuzz-${{ matrix.target }}.log"
+            -max_total_time="${FUZZ_TIME}" -timeout=10 2>&1 | tee "fuzz-${{ matrix.target }}.log"
           status=${PIPESTATUS[0]}
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit "$status"
@@ -67,7 +92,10 @@ jobs:
           retention-days: 30
 
       - name: Report fuzz failure
-        if: always() && steps.fuzz.outcome == 'failure'
+        if: >-
+          always() &&
+          steps.fuzz.outcome == 'failure' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/github-script@v8
         env:
           FUZZ_TARGET: ${{ matrix.target }}
