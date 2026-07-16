@@ -1,0 +1,1 @@
+doc.pages >= 50 && doc.pages <= 100 || doc.title startswith_cs "The"

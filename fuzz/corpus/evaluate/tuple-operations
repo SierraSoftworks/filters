@@ -1,0 +1,5 @@
+"rust" in tuple && tuple contains_cs "fuzz" && "nope" in_cs tuple
+ignored
+rust
+fuzz
+book

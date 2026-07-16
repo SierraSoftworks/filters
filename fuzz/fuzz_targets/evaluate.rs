@@ -75,13 +75,7 @@ fn main() {
         match common::FuzzInput::decode(data) {
             common::FuzzInput::Raw(data) => evaluate_raw(&data),
             common::FuzzInput::Structured(filter) => {
-                let expression = filter.expression();
-                let tuple = filter
-                    .tuple
-                    .iter()
-                    .take(MAX_TUPLE_LENGTH)
-                    .map(String::as_str)
-                    .collect();
+                let tuple = tuple_slice(&filter.tuple);
                 let target = FuzzObject {
                     text: &filter.text,
                     number: filter.number,
@@ -89,8 +83,31 @@ fn main() {
                     tuple,
                 };
 
-                evaluate(&expression, &target, filter.function.is_deterministic());
+                evaluate(
+                    &filter.expression(),
+                    &target,
+                    filter.function.is_deterministic(),
+                );
+            }
+            common::FuzzInput::Generated(filter) => {
+                let tuple = tuple_slice(&filter.tuple);
+                let target = FuzzObject {
+                    text: &filter.text,
+                    number: filter.number,
+                    boolean: filter.boolean,
+                    tuple,
+                };
+
+                evaluate(&filter.expression(), &target, filter.is_deterministic());
             }
         }
     });
+}
+
+fn tuple_slice(values: &[String]) -> Vec<&str> {
+    values
+        .iter()
+        .take(MAX_TUPLE_LENGTH)
+        .map(String::as_str)
+        .collect()
 }

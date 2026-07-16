@@ -1,0 +1,2 @@
+text == "groß" || text contains "Σ" || text like_cs "*ß*"
+groß

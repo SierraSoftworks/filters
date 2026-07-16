@@ -1,0 +1,3 @@
+(number + 8) - 2 == 48 && number - number == 0
+42.5
+x

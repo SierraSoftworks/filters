@@ -1,0 +1,1 @@
+name == r#"raw "quoted" value"# && pattern matches r"\d+\.\d+"
