@@ -3,7 +3,7 @@ use filt_rs::{Filter, FilterValue, Filterable};
 #[path = "../fuzz_targets/common.rs"]
 mod common;
 
-use common::{BuiltInFunction, Operand, Operator, StructuredFilter};
+use common::{BuiltInFunction, FuzzInput, Operand, Operator, StructuredFilter};
 
 struct Target;
 
@@ -41,4 +41,18 @@ fn every_operator_and_function_combination_parses_and_evaluates() {
                 .unwrap_or_else(|error| panic!("failed to evaluate {expression:?}: {error}"));
         }
     }
+}
+
+#[test]
+fn even_selectors_preserve_raw_afl_inputs() {
+    let input = FuzzInput::decode(b"doc.title == true");
+
+    assert_eq!(input.expression(), "doc.title == true");
+}
+
+#[test]
+fn odd_selectors_decode_structured_afl_inputs() {
+    let input = FuzzInput::decode(&[1, 0, 0, 0]);
+
+    assert!(matches!(input, FuzzInput::Structured(_)));
 }

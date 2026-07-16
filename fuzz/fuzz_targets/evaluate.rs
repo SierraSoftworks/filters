@@ -1,7 +1,4 @@
-#![no_main]
-
 use filt_rs::{Filter, FilterValue, Filterable};
-use libfuzzer_sys::fuzz_target;
 
 mod common;
 
@@ -73,25 +70,27 @@ fn evaluate_raw(data: &[u8]) {
     );
 }
 
-fuzz_target!(|input: common::FuzzInput| {
-    match input {
-        common::FuzzInput::Raw(data) => evaluate_raw(&data),
-        common::FuzzInput::Structured(filter) => {
-            let expression = filter.expression();
-            let tuple = filter
-                .tuple
-                .iter()
-                .take(MAX_TUPLE_LENGTH)
-                .map(String::as_str)
-                .collect();
-            let target = FuzzObject {
-                text: &filter.text,
-                number: filter.number,
-                boolean: filter.boolean,
-                tuple,
-            };
+fn main() {
+    afl::fuzz!(|data: &[u8]| {
+        match common::FuzzInput::decode(data) {
+            common::FuzzInput::Raw(data) => evaluate_raw(&data),
+            common::FuzzInput::Structured(filter) => {
+                let expression = filter.expression();
+                let tuple = filter
+                    .tuple
+                    .iter()
+                    .take(MAX_TUPLE_LENGTH)
+                    .map(String::as_str)
+                    .collect();
+                let target = FuzzObject {
+                    text: &filter.text,
+                    number: filter.number,
+                    boolean: filter.boolean,
+                    tuple,
+                };
 
-            evaluate(&expression, &target, filter.function.is_deterministic());
+                evaluate(&expression, &target, filter.function.is_deterministic());
+            }
         }
-    }
-});
+    });
+}
