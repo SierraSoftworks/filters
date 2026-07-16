@@ -1,0 +1,2 @@
+trim(text) startswith "Cafe" && trim(text) endswith_cs "!"
+  Cafe au lait!  

@@ -1,0 +1,1 @@
+trim(doc.title) == "Cafe" && trim(text) endswith_cs "!"

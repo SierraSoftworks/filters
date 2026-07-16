@@ -1,0 +1,1 @@
+datetime(doc.created) < datetime("2026-03-12T12:00:00Z") - 1w

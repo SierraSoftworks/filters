@@ -1,0 +1,4 @@
+number >= 40 && number <= 50 && boolean == true
+42.5 text value
+rust
+fuzz

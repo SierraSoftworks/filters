@@ -1,0 +1,1 @@
+doc.title like "*guide*" && branch like_cs "feat/*" && sha matches r"^[0-9a-f]{7,40}$"

@@ -1,0 +1,1 @@
+created >= now() - 7d && updated < ago(1h30m) && ttl == 500ms
