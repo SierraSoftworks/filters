@@ -7,7 +7,12 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+default = ["fuzz-targets"]
+fuzz-targets = []
+
 [dependencies]
+arbitrary = { version = "1", features = ["derive"] }
 filt-rs = { path = "..", features = ["chrono", "regex"] }
 libfuzzer-sys = "0.4"
 
@@ -17,6 +22,7 @@ path = "fuzz_targets/parse.rs"
 test = false
 doc = false
 bench = false
+required-features = ["fuzz-targets"]
 
 [[bin]]
 name = "evaluate"
@@ -24,3 +30,4 @@ path = "fuzz_targets/evaluate.rs"
 test = false
 doc = false
 bench = false
+required-features = ["fuzz-targets"]

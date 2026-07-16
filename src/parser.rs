@@ -7,8 +7,11 @@ use super::{
     FilterValue, expr::Expr, functions::Function, location::Loc, pattern::Glob, token::Token,
 };
 
+const MAX_NESTING_DEPTH: usize = 64;
+
 pub struct Parser<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> {
     tokens: Peekable<I>,
+    nesting_depth: usize,
     /// The functions which may be called from the expression. Function calls are
     /// resolved against (and validated by) this set at parse time; the matched
     /// [`Function`] is cloned into the resulting [`Expr::FunctionCall`] node so
@@ -20,6 +23,7 @@ impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
     pub fn parse(tokens: I, functions: &'f [Arc<dyn Function>]) -> Result<Expr<'a>, Error> {
         let mut parser = Parser {
             tokens: tokens.peekable(),
+            nesting_depth: 0,
             functions,
         };
 
@@ -27,6 +31,26 @@ impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
         parser.ensure_end()?;
 
         Ok(expr)
+    }
+
+    fn nested<T>(
+        &mut self,
+        location: Loc,
+        parse: impl FnOnce(&mut Self) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        if self.nesting_depth >= MAX_NESTING_DEPTH {
+            return Err(human_errors::user(
+                format!("Your filter expression is nested too deeply at {location}."),
+                &[
+                    "Reduce nested parentheses, function calls, or unary operators to at most 64 levels.",
+                ],
+            ));
+        }
+
+        self.nesting_depth += 1;
+        let result = parse(self);
+        self.nesting_depth -= 1;
+        result
     }
 
     fn ensure_end(&mut self) -> Result<(), Error> {
@@ -211,8 +235,10 @@ impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
 
     fn unary(&mut self) -> Result<Expr<'a>, Error> {
         if matches!(self.tokens.peek(), Some(Ok(Token::Not(..)))) {
-            let operator = self.tokens.next().unwrap()?.as_unary_operator();
-            let right = self.unary()?;
+            let token = self.tokens.next().unwrap()?;
+            let location = token.location();
+            let operator = token.as_unary_operator();
+            let right = self.nested(location, |parser| parser.unary())?;
             Ok(Expr::Unary(operator, Box::new(right)))
         } else {
             self.primary()
@@ -223,7 +249,7 @@ impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
         match self.tokens.peek() {
             Some(Ok(Token::LeftParen(..))) => {
                 let start = self.tokens.next().unwrap()?;
-                let expr = self.or()?;
+                let expr = self.nested(start.location(), |parser| parser.or())?;
                 if let Some(Ok(Token::RightParen(..))) = self.tokens.next() {
                     Ok(expr)
                 } else {
@@ -264,7 +290,7 @@ impl<'a, 'f, I: Iterator<Item = Result<Token<'a>, Error>>> Parser<'a, 'f, I> {
                 if let Some(Ok(Token::Property(loc, p))) = self.tokens.next() {
                     if matches!(self.tokens.peek(), Some(Ok(Token::LeftParen(..)))) {
                         self.tokens.next();
-                        self.function_call(loc, p)
+                        self.nested(loc, |parser| parser.function_call(loc, p))
                     } else {
                         Ok(Expr::Property(p))
                     }

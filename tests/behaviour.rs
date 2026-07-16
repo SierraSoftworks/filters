@@ -429,9 +429,20 @@ mod logic {
 
     #[test]
     fn deeply_nested_groups_parse_and_evaluate() {
-        let depth = 100;
+        let depth = 64;
         let filter = format!("{}true{}", "(".repeat(depth), ")".repeat(depth));
         assert!(matches(&filter));
+    }
+
+    #[rstest]
+    #[case("(", ")")]
+    #[case("!", "")]
+    #[case("trim(", ")")]
+    fn excessively_nested_expressions_are_rejected(#[case] prefix: &str, #[case] suffix: &str) {
+        let depth = 65;
+        let filter = format!("{}true{}", prefix.repeat(depth), suffix.repeat(depth));
+
+        assert!(parse_error(&filter).contains("nested too deeply"));
     }
 
     #[test]
