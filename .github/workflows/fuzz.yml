@@ -68,7 +68,7 @@ jobs:
         run: |
           # Build AFL++ for the current target
 
-          cargo +nightly afl config --build
+          cargo +nightly afl config --build --force
 
           # Build the fuzz target in release mode
 
