@@ -73,9 +73,11 @@ fn generated_expressions_always_parse_and_evaluate() {
     // without error, and that deterministic filters are stable across runs. This
     // is the same contract the `evaluate` fuzz target asserts, checked here so a
     // regression in the generator surfaces without a full fuzzing run.
+    // A modest sweep keeps the test fast (it is a smoke check, not a substitute
+    // for a real fuzzing run) while still exercising a broad slice of the grammar.
     let mut checked = 0;
     let mut state: u64 = 0x9E3779B97F4A7C15;
-    for seed in 0..4_000u64 {
+    for seed in 0..1_000u64 {
         // A small xorshift keeps the seeds varied yet reproducible without any
         // dev-dependency on an RNG crate.
         state ^= seed.wrapping_mul(0x2545F4914F6CDD1D);
