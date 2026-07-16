@@ -18,10 +18,11 @@ jobs:
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
     env:
-      CARGO_FUZZ_VERSION: 0.13.2
-      CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+      CARGO_AFL_VERSION: 0.18.2
+      AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: 1
+      AFL_NO_UI: 1
+      AFL_SKIP_CPUFREQ: 1
       FUZZ_TIME: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 300 || 60 }}
-      RUSTFLAGS: -C target-feature=-crt-static
     strategy:
       fail-fast: false
       matrix:
@@ -43,29 +44,36 @@ jobs:
             fuzz -> fuzz/target
           key: fuzz-${{ matrix.target }}
 
-      - name: Cache cargo-fuzz
-        uses: actions/cache@v4
+      - name: Cache cargo-afl
+        uses: actions/cache@v6
         with:
-          path: ${{ runner.tool_cache }}/cargo-fuzz
-          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+          path: ${{ runner.tool_cache }}/cargo-afl
+          key: cargo-afl-bin-${{ env.CARGO_AFL_VERSION }}
 
-      - name: Add cargo-fuzz to PATH
+      - name: Add cargo-afl to PATH
         shell: bash
-        run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> "$GITHUB_PATH"
+        run: echo "${{ runner.tool_cache }}/cargo-afl/bin" >> "$GITHUB_PATH"
 
-      - name: Install cargo-fuzz
+      - name: Install cargo-afl
         run: >-
           cargo install
-          --root "${{ runner.tool_cache }}/cargo-fuzz"
-          --version "${{ env.CARGO_FUZZ_VERSION }}"
-          cargo-fuzz
+          --root "${{ runner.tool_cache }}/cargo-afl"
+          --version "${{ env.CARGO_AFL_VERSION }}"
+          cargo-afl
           --locked
 
       - name: Build fuzz target
-        run: >-
-          cargo +nightly fuzz build
-          --target x86_64-unknown-linux-gnu
-          "${{ matrix.target }}"
+        run: |
+          # Build AFL++ for the current target
+
+          cargo +nightly afl config --build
+
+          # Build the fuzz target in release mode
+
+          cargo +nightly afl build \
+            --manifest-path fuzz/Cargo.toml \
+            --release \
+            --bin "${{ matrix.target }}"
 
       - name: Run fuzz target
         id: fuzz
@@ -73,10 +81,25 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu \
-            "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" -- \
-            -max_total_time="${FUZZ_TIME}" -timeout=10 2>&1 | tee "fuzz-${{ matrix.target }}.log"
+          # Disable external core dump handlers so that the fuzzer can generate its own core dumps.
+          echo core | sudo tee /proc/sys/kernel/core_pattern
+
+          # Create output directory for this fuzz target
+          mkdir -p "fuzz/output/${{ matrix.target }}"
+
+          cargo +nightly afl fuzz \
+            -i "fuzz/corpus/${{ matrix.target }}" \
+            -o "fuzz/output/${{ matrix.target }}" \
+            -V "${FUZZ_TIME}" \
+            -t 10000 \
+            -- "fuzz/target/release/${{ matrix.target }}" \
+            2>&1 | tee "fuzz-${{ matrix.target }}.log"
           status=${PIPESTATUS[0]}
+          if [[ ${status} -eq 0 ]] && find "fuzz/output/${{ matrix.target }}/default" \
+            \( -path '*/crashes/*' -o -path '*/hangs/*' \) \
+            -type f ! -name README.txt -print -quit | grep -q .; then
+            status=1
+          fi
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit "$status"
 
@@ -87,7 +110,7 @@ jobs:
           name: fuzz-failure-${{ matrix.target }}-${{ github.run_id }}
           path: |
             fuzz-${{ matrix.target }}.log
-            fuzz/artifacts/${{ matrix.target }}
+            fuzz/output/${{ matrix.target }}
           if-no-files-found: warn
           retention-days: 30
 

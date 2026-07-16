@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 
 const MAX_INPUT_LENGTH: usize = 16 * 1024;
 
@@ -12,13 +12,29 @@ pub fn bounded_text(data: &[u8]) -> String {
     String::from_utf8_lossy(bounded_bytes(data)).into_owned()
 }
 
-#[derive(Arbitrary, Debug)]
+#[derive(Debug)]
 pub enum FuzzInput {
     Raw(Vec<u8>),
     Structured(StructuredFilter),
 }
 
 impl FuzzInput {
+    pub fn decode(data: &[u8]) -> Self {
+        let data = bounded_bytes(data);
+        let Some((&selector, payload)) = data.split_first() else {
+            return Self::Raw(Vec::new());
+        };
+
+        if selector & 1 != 0 {
+            let mut unstructured = Unstructured::new(payload);
+            if let Ok(filter) = StructuredFilter::arbitrary(&mut unstructured) {
+                return Self::Structured(filter);
+            }
+        }
+
+        Self::Raw(data.to_vec())
+    }
+
     pub fn expression(&self) -> String {
         match self {
             Self::Raw(data) => bounded_text(data),

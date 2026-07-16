@@ -15,7 +15,7 @@ for normal development and nightly Rust for fuzzing:
 ```sh
 rustup toolchain install stable --component rustfmt clippy
 rustup toolchain install nightly
-cargo install cargo-fuzz --version 0.13.2 --locked
+cargo install cargo-afl --version 0.18.2 --locked
 ```
 
 Commands in this guide select nightly with `+nightly`, so your default
@@ -23,30 +23,17 @@ toolchain can remain stable.
 
 ### Native dependencies
 
-`cargo-fuzz` uses libFuzzer and LLVM sanitizer instrumentation. Install a C++11
-compiler and the platform's AddressSanitizer support:
+`cargo-afl` bundles AFL++ and uses LLVM instrumentation. Install a C compiler
+and `make`:
 
 | Platform | Setup |
 | --- | --- |
-| Linux | Install a C++ toolchain, such as `sudo apt-get install build-essential clang` on Ubuntu/Debian. The CI fuzzers use `x86_64-unknown-linux-gnu` with dynamically linked GNU libc. |
+| Linux | Install a C toolchain and `make`, such as `sudo apt-get install build-essential clang` on Ubuntu/Debian. |
 | macOS | Install the Xcode Command Line Tools with `xcode-select --install`. Both x86-64 and Apple Silicon macOS are supported. |
-| Windows | Install Visual Studio 2022 with **MSVC v143 - VS 2022 C++ x64/x86 build tools** and **C++ AddressSanitizer** through Visual Studio Installer. |
+| Windows | Run AFL++ inside WSL2 or Docker; `afl.rs` does not support native Windows. |
 
-On Windows, run fuzzers from **Developer PowerShell for VS 2022** or initialize
-an existing PowerShell session before running Cargo:
-
-```powershell
-Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-Enter-VsDevShell `
-  -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Community' `
-  -SkipAutomaticLocation `
-  -DevCmdArguments '-arch=x64 -host_arch=x64'
-```
-
-Visual Studio editions or installation paths may differ. The initialized shell
-must be able to find the MSVC linker and AddressSanitizer libraries. The
-optional Windows debugger path is
-`C:\Program Files (x86)\Windows Kits\10\Debuggers\x64`.
+The official `aflplusplus/aflplusplus` container can be used when a native
+Linux or macOS environment is unavailable.
 
 ### Repository conventions
 
@@ -124,6 +111,7 @@ Compile and lint both targets without starting a fuzzing campaign:
 ```sh
 cargo +nightly check --manifest-path fuzz/Cargo.toml --bins
 cargo +nightly clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings
+cargo +nightly afl build --manifest-path fuzz/Cargo.toml --release --bins
 ```
 
 ### Running fuzzers
@@ -131,27 +119,26 @@ cargo +nightly clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings
 Run either target for five minutes against its curated corpus:
 
 ```sh
-cargo +nightly fuzz run parse fuzz/corpus/parse -- -max_total_time=300 -timeout=10
-cargo +nightly fuzz run evaluate fuzz/corpus/evaluate -- -max_total_time=300 -timeout=10
+cargo +nightly afl fuzz -i fuzz/corpus/parse -o fuzz/output/parse -V 300 -t 10000 -- fuzz/target/release/parse
+cargo +nightly afl fuzz -i fuzz/corpus/evaluate -o fuzz/output/evaluate -V 300 -t 10000 -- fuzz/target/release/evaluate
 ```
 
-Omit `-max_total_time` to run until interrupted. `-runs=1000` is useful for a
-quick local smoke test. libFuzzer adds discovered inputs to the corpus directory
-while it runs; do not commit hash-named generated inputs unless they provide
-durable coverage that the named seeds do not.
+Omit `-V 300` to run until interrupted. AFL++ keeps generated inputs and state
+under `fuzz/output/`, leaving the curated seed corpus unchanged.
 
 ### Failures and CI
 
-Crashing inputs are written under `fuzz/artifacts/<target>/`. Reproduce one by
-passing its path to the target, then add a focused regression test before
-fixing the defect:
+Crashing and hanging inputs are written under
+`fuzz/output/<target>/default/{crashes,hangs}/`. Reproduce one through standard
+input, then add a focused regression test before fixing the defect:
 
 ```sh
-cargo +nightly fuzz run parse fuzz/artifacts/parse/crash-<hash>
+cargo +nightly afl run --manifest-path fuzz/Cargo.toml --bin parse < fuzz/output/parse/default/crashes/id:<case>
 ```
 
 Pull requests and `main` run each target for 60 seconds. Scheduled and manually
 dispatched workflows run each target for five minutes, retain logs and crash
 artifacts, and create or update a target-specific issue on failure. See the
-[Rust Fuzz Book](https://rust-fuzz.github.io/book/cargo-fuzz.html) for advanced
-corpus minimization, sanitizer, and debugging workflows.
+[Rust Fuzz Book](https://rust-fuzz.github.io/book/afl.html) and
+[AFL++ documentation](https://github.com/AFLplusplus/AFLplusplus/tree/stable/docs)
+for advanced campaign, corpus minimization, and debugging workflows.

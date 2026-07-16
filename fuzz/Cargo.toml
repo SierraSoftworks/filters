@@ -4,17 +4,14 @@ version = "0.0.0"
 publish = false
 edition = "2024"
 
-[package.metadata]
-cargo-fuzz = true
-
 [features]
 default = ["fuzz-targets"]
 fuzz-targets = []
 
 [dependencies]
+afl = "0.18.2"
 arbitrary = { version = "1", features = ["derive"] }
 filt-rs = { path = "..", features = ["chrono", "regex"] }
-libfuzzer-sys = "0.4"
 
 [[bin]]
 name = "parse"
