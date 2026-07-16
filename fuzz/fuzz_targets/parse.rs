@@ -5,13 +5,13 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 
-fuzz_target!(|data: &[u8]| {
-    let input = common::bounded_text(data);
+fuzz_target!(|input: common::FuzzInput| {
+    let expression = input.expression();
 
-    if let Ok(filter) = Filter::new(input.as_str()) {
-        assert_eq!(filter.raw(), input);
+    if let Ok(filter) = Filter::new(expression.as_str()) {
+        assert_eq!(filter.raw(), expression);
 
         let cloned = filter.clone();
-        assert_eq!(cloned.raw(), input);
+        assert_eq!(cloned.raw(), expression);
     }
 });

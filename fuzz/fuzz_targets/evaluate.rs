@@ -31,7 +31,24 @@ impl Filterable for FuzzObject<'_> {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fn evaluate(expression: &str, target: &FuzzObject<'_>, deterministic: bool) {
+    if let Ok(filter) = Filter::new(expression) {
+        let matched = filter
+            .matches(target)
+            .expect("a parsed filter using built-in functions to evaluate");
+
+        if deterministic {
+            assert_eq!(
+                filter
+                    .matches(target)
+                    .expect("a parsed deterministic filter to evaluate again"),
+                matched
+            );
+        }
+    }
+}
+
+fn evaluate_raw(data: &[u8]) {
     let input = common::bounded_text(data);
     let mut fields = input.lines();
     let expression = fields.next().unwrap_or_default();
@@ -49,18 +66,32 @@ fuzz_target!(|data: &[u8]| {
         tuple,
     };
 
-    if let Ok(filter) = Filter::new(expression) {
-        let matched = filter
-            .matches(&target)
-            .expect("a parsed filter using built-in functions to evaluate");
+    evaluate(
+        expression,
+        &target,
+        !expression.contains("now") && !expression.contains("ago"),
+    );
+}
 
-        if !expression.contains("now") && !expression.contains("ago") {
-            assert_eq!(
-                filter
-                    .matches(&target)
-                    .expect("a parsed deterministic filter to evaluate again"),
-                matched
-            );
+fuzz_target!(|input: common::FuzzInput| {
+    match input {
+        common::FuzzInput::Raw(data) => evaluate_raw(&data),
+        common::FuzzInput::Structured(filter) => {
+            let expression = filter.expression();
+            let tuple = filter
+                .tuple
+                .iter()
+                .take(MAX_TUPLE_LENGTH)
+                .map(String::as_str)
+                .collect();
+            let target = FuzzObject {
+                text: &filter.text,
+                number: filter.number,
+                boolean: filter.boolean,
+                tuple,
+            };
+
+            evaluate(&expression, &target, filter.function.is_deterministic());
         }
     }
 });
