@@ -1,0 +1,1 @@
+doc.published && doc.pages >= 50 && doc.title like "*rust*"

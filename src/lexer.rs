@@ -18,38 +18,33 @@ impl<'a> Scanner<'a> {
     }
 
     fn match_char(&mut self, next: char) -> bool {
-        if let Some((idx, c)) = self.chars.peek() {
+        if let Some((idx, c)) = self.chars.peek()
+            && *c == next
+        {
             if *c == '\n' {
                 self.line += 1;
                 self.line_start = *idx + 1;
             }
-
-            if *c == next {
-                self.chars.next();
-                return true;
-            }
+            self.chars.next();
+            return true;
         }
 
         false
     }
 
-    fn advance_while_fn<F: Fn(usize, char) -> bool>(&mut self, f: F) -> usize {
-        let mut length = 0;
+    fn advance_while_fn<F: Fn(usize, char) -> bool>(&mut self, f: F) {
         while let Some((idx, c)) = self.chars.peek() {
+            if !f(*idx, *c) {
+                break;
+            }
+
             if *c == '\n' {
                 self.line += 1;
                 self.line_start = *idx + 1;
             }
 
-            if !f(*idx, *c) {
-                break;
-            }
-
             self.chars.next();
-            length += 1;
         }
-
-        length
     }
 
     fn read_string(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
@@ -186,7 +181,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn read_number(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
-        let mut end = start + self.advance_while_fn(|_, c| c.is_numeric());
+        self.advance_while_fn(|_, c| c.is_numeric());
         if let Some((loc, c)) = self.chars.peek()
             && *c == '.'
             && self.source[loc + 1..]
@@ -196,7 +191,7 @@ impl<'a> Scanner<'a> {
                 .unwrap_or_default()
         {
             self.chars.next();
-            end += 1 + self.advance_while_fn(|_, c| c.is_numeric());
+            self.advance_while_fn(|_, c| c.is_numeric());
         }
 
         // A number which is immediately followed by a letter is a duration
@@ -207,7 +202,7 @@ impl<'a> Scanner<'a> {
 
         Ok(Token::Number(
             Loc::new(self.line, 1 + start - self.line_start),
-            &self.source[start..end + 1],
+            &self.source[start..self.position()],
         ))
     }
 
@@ -264,9 +259,8 @@ impl<'a> Scanner<'a> {
     }
 
     fn read_identifier(&mut self, start: usize) -> Result<Token<'a>, human_errors::Error> {
-        let end = start
-            + self.advance_while_fn(|_, c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-');
-        let lexeme = &self.source[start..end + 1];
+        self.advance_while_fn(|_, c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-');
+        let lexeme = &self.source[start..self.position()];
         let location = Loc::new(self.line, 1 + start - self.line_start);
 
         match lexeme {
@@ -642,6 +636,11 @@ mod tests {
         assert_sequence!("123.456", Token::Number(.., "123.456"));
     }
 
+    #[test]
+    fn test_unicode_number_is_sliced_on_character_boundaries() {
+        assert_sequence!("١", Token::Number(.., "١"));
+    }
+
     #[rstest]
     #[case("0", "0")]
     #[case("123", "123")]
@@ -740,6 +739,24 @@ mod tests {
     }
 
     #[test]
+    fn test_unicode_identifiers_are_sliced_on_character_boundaries() {
+        assert_sequence!(
+            "café �name",
+            Token::Property(.., "café"),
+            Token::Property(.., "�name"),
+        );
+    }
+
+    #[test]
+    fn test_identifier_followed_by_newline_preserves_location_tracking() {
+        assert_sequence!(
+            "property\nnext",
+            Token::Property(Loc { line: 1, column: 1 }, "property"),
+            Token::Property(Loc { line: 2, column: 1 }, "next"),
+        );
+    }
+
+    #[test]
     fn test_mixed() {
         assert_sequence!(
             "foo == \"bar\" && baz != 123",
@@ -826,6 +843,7 @@ mod tests {
 
     #[rstest]
     #[case("&", "Filter included an orphaned '&' at line 1, column 1")]
+    #[case("&\n", "Filter included an orphaned '&' at line 1, column 1")]
     #[case("|", "Filter included an orphaned '|' at line 1, column 1")]
     #[case("=", "Filter included an orphaned '=' at line 1, column 1")]
     #[case("a & b", "Filter included an orphaned '&' at line 1, column 3")]

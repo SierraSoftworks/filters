@@ -28,6 +28,9 @@ This crate was extracted from the Sierra Softworks
 [mail-backup](https://github.com/SierraSoftworks/mail-backup) projects, where
 it powers their backup policy filtering.
 
+Development setup, test commands, and cross-platform fuzzing instructions are
+available in the [contributing guide](CONTRIBUTING.md).
+
 ## Features
 
 - **Friendly syntax** — reads like plain English, with `&&`/`||`/`!`,
