@@ -47,7 +47,9 @@ jobs:
       - name: Cache cargo-afl
         uses: actions/cache@v6
         with:
-          path: ${{ runner.tool_cache }}/cargo-afl
+          path: |
+            ${{ runner.tool_cache }}/cargo-afl
+            ~/.cargo/registry/src/index.crates.io-*/cargo-afl-common-${{ env.CARGO_AFL_VERSION }}
           key: cargo-afl-bin-${{ env.CARGO_AFL_VERSION }}
 
       - name: Add cargo-afl to PATH
