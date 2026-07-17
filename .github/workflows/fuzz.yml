@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload failure details
         if: always() && steps.fuzz.outcome == 'failure'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-failure-${{ matrix.target }}-${{ github.run_id }}
           path: |
@@ -121,7 +121,7 @@ jobs:
           always() &&
           steps.fuzz.outcome == 'failure' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_LOG: fuzz-${{ matrix.target }}.log
